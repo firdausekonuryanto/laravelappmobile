@@ -4,10 +4,12 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class TransactionService {
   // ⚠️ Kalau pakai emulator Android, ganti ke 10.0.2.2
-  final String baseUrl = 'http://10.0.2.2:8001/api';
+  String get baseUrl =>
+      dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:8001/api';
 
   Future<Map<String, dynamic>> fetchCreateData() async {
     final response = await http.get(Uri.parse('$baseUrl/transactions/create'));

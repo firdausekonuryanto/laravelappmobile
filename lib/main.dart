@@ -1,7 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'screens/main_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await dotenv.load(fileName: ".env");
+    print("✅ ENV loaded successfully: ${dotenv.env['API_BASE_URL']}");
+  } catch (e) {
+    print("❌ Error loading .env: $e");
+  }
+
   runApp(const MyApp());
 }
 
