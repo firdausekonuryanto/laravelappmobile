@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/transaction_service.dart';
-import 'package:dropdown_search/dropdown_search.dart';
 
 class CreateTransactionScreen extends StatefulWidget {
   final VoidCallback onTransactionSuccess;
 
-  // Ubah constructor untuk menerima callback
   const CreateTransactionScreen({
     super.key,
     required this.onTransactionSuccess,
   });
+
   @override
   State<CreateTransactionScreen> createState() =>
       _CreateTransactionScreenState();
@@ -19,23 +18,29 @@ class CreateTransactionScreen extends StatefulWidget {
 class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   final TransactionService _service = TransactionService();
   final _formatter = NumberFormat("#,###", "id_ID");
+
   List<dynamic> customers = [];
   List<dynamic> users = [];
   List<dynamic> paymentMethods = [];
   List<dynamic> products = [];
 
+  List<Map<String, dynamic>> selectedProducts = [];
+
   int? selectedCustomer;
   int? selectedUser;
   int? selectedPayment;
-  List<Map<String, dynamic>> selectedProducts = [];
 
   double discount = 0;
   double paidAmount = 0;
-
   bool isLoading = true;
 
   final TextEditingController discountController = TextEditingController();
   final TextEditingController paidAmountController = TextEditingController();
+  final TextEditingController searchController = TextEditingController();
+
+  // Pagination control
+  int itemsPerPage = 5;
+  int currentPage = 0;
 
   @override
   void initState() {
@@ -43,7 +48,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
     loadCreateData();
   }
 
-  @override
   Future<void> loadCreateData() async {
     try {
       final response = await _service.fetchCreateData();
@@ -54,23 +58,20 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
         paymentMethods = data['paymentMethods'];
         products = data['products'];
 
-        // Set default values
-        selectedCustomer =
-            customers.firstWhere((c) => c['name'] == 'Pelanggan Umum')['id']
-                as int;
-        selectedUser =
-            users.firstWhere((u) => u['name'] == 'Administrator Toko')['id']
-                as int;
-        selectedPayment =
-            paymentMethods.firstWhere(
-                  (p) => p['name'].toLowerCase() == 'cash',
-                )['id']
-                as int;
+        selectedCustomer = customers.firstWhere(
+          (c) => c['name'] == 'Pelanggan Umum',
+        )['id'];
+        selectedUser = users.firstWhere(
+          (u) => u['name'] == 'Administrator Toko',
+        )['id'];
+        selectedPayment = paymentMethods.firstWhere(
+          (p) => p['name'].toLowerCase() == 'cash',
+        )['id'];
 
         isLoading = false;
       });
     } catch (e) {
-      debugPrint('Error loading data: $e');
+      debugPrint('Error load data: $e');
       setState(() => isLoading = false);
     }
   }
@@ -98,22 +99,33 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
     return (paidAmount - total).clamp(0, double.infinity);
   }
 
-  void addProduct() {
+  void addProductFromList(dynamic product) {
+    final existingIndex = selectedProducts.indexWhere(
+      (item) => item['product_id'] == product['id'],
+    );
+
     setState(() {
-      selectedProducts.add({'product_id': null, 'quantity': 1});
+      if (existingIndex != -1) {
+        selectedProducts[existingIndex]['quantity']++;
+      } else {
+        selectedProducts.add({'product_id': product['id'], 'quantity': 1});
+      }
     });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Produk '${product['name']}' ditambahkan")),
+    );
   }
 
   void removeProduct(int index) {
-    setState(() {
-      selectedProducts.removeAt(index);
-    });
+    setState(() => selectedProducts.removeAt(index));
   }
 
   @override
   void dispose() {
     discountController.dispose();
     paidAmountController.dispose();
+    searchController.dispose();
     super.dispose();
   }
 
@@ -123,6 +135,19 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    // Filtering produk berdasarkan pencarian
+    final filteredProducts = products.where((p) {
+      final query = searchController.text.toLowerCase();
+      return p['name'].toString().toLowerCase().contains(query);
+    }).toList();
+
+    // Pagination
+    int totalPages = (filteredProducts.length / itemsPerPage).ceil();
+    final paginatedProducts = filteredProducts
+        .skip(currentPage * itemsPerPage)
+        .take(itemsPerPage)
+        .toList();
+
     return Scaffold(
       appBar: AppBar(title: const Text("Create Transaction")),
       body: SingleChildScrollView(
@@ -130,153 +155,247 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🟢 Customer Dropdown
+            // =============================
+            // 🧍 Dropdown Customer, User, Payment
+            // =============================
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "Customer"),
               value: selectedCustomer,
-              items: customers.map<DropdownMenuItem<int>>((c) {
+              items: customers.map((c) {
                 return DropdownMenuItem<int>(
-                  value: c['id'] as int,
+                  value: c['id'],
                   child: Text(c['name']),
                 );
               }).toList(),
               onChanged: (v) => setState(() => selectedCustomer = v),
             ),
-
             const SizedBox(height: 12),
-            // 🟢 User Dropdown
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "User"),
               value: selectedUser,
-              items: users
-                  .map<DropdownMenuItem<int>>(
-                    (u) => DropdownMenuItem<int>(
-                      value: (u['id'] as int), // pastikan dikonversi ke int
-                      child: Text(
-                        u['name'].toString(),
-                      ), // pastikan teks adalah string
-                    ),
-                  )
-                  .toList(),
+              items: users.map((u) {
+                return DropdownMenuItem<int>(
+                  value: u['id'],
+                  child: Text(u['name']),
+                );
+              }).toList(),
               onChanged: (v) => setState(() => selectedUser = v),
             ),
-
             const SizedBox(height: 12),
-            // 🟢 Payment Method Dropdown
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "Payment Method"),
               value: selectedPayment,
-              items: paymentMethods
-                  .map<DropdownMenuItem<int>>(
-                    (p) => DropdownMenuItem<int>(
-                      value: (p['id'] as int),
-                      child: Text(p['name'].toString()),
-                    ),
-                  )
-                  .toList(),
+              items: paymentMethods.map((p) {
+                return DropdownMenuItem<int>(
+                  value: p['id'],
+                  child: Text(p['name']),
+                );
+              }).toList(),
               onChanged: (v) => setState(() => selectedPayment = v),
             ),
 
             const Divider(height: 32),
             const Text(
-              "Products",
+              "Cari & Tambah Produk",
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 8),
 
-            Column(
-              children: [
-                for (int i = 0; i < selectedProducts.length; i++) ...[
-                  Card(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          DropdownButtonFormField<int>(
-                            decoration: const InputDecoration(
-                              labelText: "Product",
-                            ),
-                            value:
-                                selectedProducts[i]['product_id']
-                                    as int?, // pastikan nullable int
-                            items: products
-                                .map<DropdownMenuItem<int>>(
-                                  (p) => DropdownMenuItem<int>(
-                                    value: p['id'] as int,
-                                    child: Text(
-                                      "${p['name']} (Rp${_formatter.format(p['price'])})",
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (v) {
-                              setState(() {
-                                selectedProducts[i]['product_id'] = v;
-                              });
-                            },
+            // 🔍 Pencarian produk
+            TextField(
+              controller: searchController,
+              decoration: const InputDecoration(
+                labelText: "Cari produk...",
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() {
+                currentPage = 0;
+              }),
+            ),
+            const SizedBox(height: 8),
+
+            // =============================
+            // 📋 Daftar Produk dengan pagination
+            // =============================
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    color: Colors.grey.shade200,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: const Row(
+                      children: [
+                        Expanded(flex: 4, child: Center(child: Text("Nama"))),
+                        Expanded(flex: 3, child: Center(child: Text("Harga"))),
+                        Expanded(flex: 2, child: Center(child: Text("Aksi"))),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 250,
+                    child: ListView.builder(
+                      itemCount: paginatedProducts.length,
+                      itemBuilder: (context, index) {
+                        final p = paginatedProducts[index];
+                        return Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: const BoxDecoration(
+                            border: Border(top: BorderSide(color: Colors.grey)),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
+                          child: Row(
                             children: [
+                              Expanded(flex: 4, child: Text(p['name'])),
                               Expanded(
-                                child: TextFormField(
-                                  decoration: const InputDecoration(
-                                    labelText: "Qty",
-                                  ),
-                                  keyboardType: TextInputType.number,
-                                  initialValue: selectedProducts[i]['quantity']
-                                      .toString(),
-                                  onChanged: (v) => setState(
-                                    () => selectedProducts[i]['quantity'] =
-                                        int.tryParse(v) ?? 1,
-                                  ),
+                                flex: 3,
+                                child: Text(
+                                  "Rp${_formatter.format(p['price'])}",
+                                  textAlign: TextAlign.center,
                                 ),
                               ),
-                              const SizedBox(width: 16),
-                              Text(
-                                "Rp${_formatter.format(calculateSubtotal(selectedProducts[i]))}",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
+                              Expanded(
+                                flex: 2,
+                                child: IconButton(
+                                  icon: const Icon(
+                                    Icons.add_circle,
+                                    color: Colors.blue,
+                                  ),
+                                  onPressed: () => addProductFromList(p),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () => removeProduct(i),
                               ),
                             ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  // 🔹 Pagination control
+                  if (totalPages > 1)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_ios, size: 18),
+                            onPressed: currentPage > 0
+                                ? () => setState(() => currentPage--)
+                                : null,
+                          ),
+                          Text(
+                            "Halaman ${currentPage + 1} dari $totalPages",
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.arrow_forward_ios, size: 18),
+                            onPressed: currentPage < totalPages - 1
+                                ? () => setState(() => currentPage++)
+                                : null,
                           ),
                         ],
                       ),
                     ),
-                  ),
                 ],
-                ElevatedButton.icon(
-                  onPressed: addProduct,
-                  icon: const Icon(Icons.add),
-                  label: const Text("Add Product"),
-                ),
-              ],
+              ),
             ),
+
+            const Divider(height: 32),
+            const Text(
+              "Produk Dipilih",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+
+            // =============================
+            // 🧾 Produk Dipilih dengan scroll
+            // =============================
+            Container(
+              constraints: const BoxConstraints(maxHeight: 250),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: selectedProducts.isEmpty
+                      ? [const Text('Belum ada produk dipilih.')]
+                      : selectedProducts.map((item) {
+                          final product = products.firstWhere(
+                            (p) => p['id'] == item['product_id'],
+                            orElse: () => {'name': 'Unknown', 'price': 0},
+                          );
+                          return Card(
+                            margin: const EdgeInsets.symmetric(vertical: 6),
+                            child: ListTile(
+                              title: Text(product['name']),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "Harga: Rp${_formatter.format(product['price'])}",
+                                  ),
+                                  Row(
+                                    children: [
+                                      const Text("Qty: "),
+                                      SizedBox(
+                                        width: 60,
+                                        child: TextField(
+                                          keyboardType: TextInputType.number,
+                                          textAlign: TextAlign.center,
+                                          controller: TextEditingController(
+                                            text: item['quantity'].toString(),
+                                          ),
+                                          onChanged: (v) {
+                                            final qty = int.tryParse(v) ?? 1;
+                                            setState(() {
+                                              item['quantity'] = qty > 0
+                                                  ? qty
+                                                  : 1;
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        "Subtotal: Rp${_formatter.format(calculateSubtotal(item))}",
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(
+                                  Icons.delete,
+                                  color: Colors.red,
+                                ),
+                                onPressed: () => removeProduct(
+                                  selectedProducts.indexOf(item),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                ),
+              ),
+            ),
+
             const Divider(height: 32),
             TextFormField(
               controller: discountController,
-              decoration: const InputDecoration(labelText: "Discount (Rp)"),
+              decoration: const InputDecoration(labelText: "Diskon (Rp)"),
               keyboardType: TextInputType.number,
               onChanged: (v) =>
                   setState(() => discount = double.tryParse(v) ?? 0),
             ),
-
             const SizedBox(height: 8),
             Text(
               "Total: Rp${_formatter.format(calculateGrandTotal())}",
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-
             const SizedBox(height: 8),
             TextFormField(
               controller: paidAmountController,
@@ -285,7 +404,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
               onChanged: (v) =>
                   setState(() => paidAmount = double.tryParse(v) ?? 0),
             ),
-
             const SizedBox(height: 8),
             Text(
               "Kembalian: Rp${_formatter.format(calculateChange())}",
@@ -295,15 +413,13 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                 color: Colors.green,
               ),
             ),
-
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () async {
                 if (selectedCustomer == null ||
                     selectedUser == null ||
                     selectedPayment == null ||
-                    selectedProducts.isEmpty ||
-                    selectedProducts.any((p) => p['product_id'] == null)) {
+                    selectedProducts.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Lengkapi semua data transaksi'),
@@ -327,7 +443,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     paidAmount: paidAmount,
                   );
 
-                  // Snackbar success
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(
@@ -336,16 +451,12 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     ),
                   );
 
-                  // Reset form
                   setState(() {
-                    selectedCustomer = null;
-                    selectedUser = null;
-                    selectedPayment = null;
                     selectedProducts.clear();
                     discount = 0;
                     paidAmount = 0;
-                    discountController.text = '';
-                    paidAmountController.text = '';
+                    discountController.clear();
+                    paidAmountController.clear();
                   });
 
                   widget.onTransactionSuccess();
