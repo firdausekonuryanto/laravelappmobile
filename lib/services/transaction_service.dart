@@ -11,7 +11,7 @@ class TransactionService {
   String get baseUrl =>
       dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:8001/api';
 
-  Future<Map<String, dynamic>> fetchCreateData() async {
+  Future<Map<String, dynamic>> _fetchCreateData() async {
     final response = await http.get(Uri.parse('$baseUrl/transactions/create'));
 
     if (response.statusCode == 200) {
@@ -25,6 +25,24 @@ class TransactionService {
       }
     } else {
       throw Exception('Failed to load data: ${response.statusCode}');
+    }
+  }
+
+  // ✅ Tambahkan parameter [page] dan [limit]
+  Future<Map<String, dynamic>> fetchCreateData({
+    int page = 1,
+    int limit = 5,
+  }) async {
+    final uri = Uri.parse('$baseUrl/transactions/create').replace(
+      queryParameters: {'page': page.toString(), 'limit': limit.toString()},
+    );
+
+    final response = await http.get(uri);
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw Exception('Gagal memuat data create transaction');
     }
   }
 
@@ -68,57 +86,59 @@ class TransactionService {
     }
   }
 
-  // Fetch transactions (index)
-  Future<List<Map<String, dynamic>>> fetchTransactions({
+  Future<Map<String, dynamic>> fetchTransactions({
     String? searchTerm,
     DateTime? startDate,
     DateTime? endDate,
+    int page = 1, // ✅ Tambah parameter halaman
   }) async {
     // 1. Siapkan query parameters
-    final Map<String, String> queryParams = {};
+    final Map<String, String> queryParams = {'page': page.toString()};
 
     if (searchTerm != null && searchTerm.isNotEmpty) {
       queryParams['search'] = searchTerm;
     }
 
     if (startDate != null) {
-      // Format tanggal ke YYYY-MM-DD
       queryParams['startDate'] = DateFormat('yyyy-MM-dd').format(startDate);
     }
 
     if (endDate != null) {
-      // Format tanggal ke YYYY-MM-DD
       queryParams['endDate'] = DateFormat('yyyy-MM-dd').format(endDate);
     }
 
-    // 2. Gabungkan base URL dan query parameters
+    // 2. Buat URL
     final uri = Uri.parse(
       '$baseUrl/transactions',
     ).replace(queryParameters: queryParams);
 
-    // 3. Lakukan HTTP GET request dengan Headers
+    // 3. Lakukan HTTP GET
     final response = await http.get(
       uri,
-      // ✅ MENAMBAHKAN HEADERS SEPERTI PERMINTAAN ANDA
       headers: {'Content-Type': 'application/json'},
     );
 
     if (response.statusCode == 200) {
       final jsonResponse = json.decode(response.body);
+      print('📦 Response paginate: $jsonResponse');
 
-      // ✅ MENYARING DATA SEPERTI PERMINTAAN ANDA
-      // Asumsi API mengembalikan {'success': true, 'data': [...]}
-      final List<dynamic>? dataList = jsonResponse['data'];
+      // ✅ Ambil bagian utama
+      final pageData = jsonResponse['data'];
 
-      if (dataList != null) {
-        return List<Map<String, dynamic>>.from(dataList);
-      } else {
-        // Jika 'data' null atau tidak ditemukan
-        return [];
-      }
+      // ✅ Ambil daftar transaksi
+      final List<dynamic> transactions = pageData['data'] ?? [];
+
+      // ✅ Return dengan meta pagination
+      return {
+        'transactions': List<Map<String, dynamic>>.from(transactions),
+        'current_page': pageData['current_page'],
+        'last_page': pageData['last_page'],
+        'next_page_url': pageData['next_page_url'],
+        'prev_page_url': pageData['prev_page_url'],
+      };
     } else {
       throw Exception(
-        'Failed to load transactions. Status code: ${response.statusCode}',
+        'Failed to load transactions (status: ${response.statusCode})',
       );
     }
   }

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:laravelappmobile/screens/DetailTransactionScreen.dart';
-import '../services/transaction_service.dart'; // Pastikan path ini benar
 import 'package:intl/intl.dart';
+import 'package:laravelappmobile/screens/DetailTransactionScreen.dart';
+import '../services/transaction_service.dart';
 
-// ✅ IndexTransactionScreenState: Dibuat publik
 class IndexTransactionScreen extends StatefulWidget {
   const IndexTransactionScreen({super.key});
 
@@ -15,12 +14,20 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   final TransactionService _service = TransactionService();
   final _formatter = NumberFormat("#,###", "id_ID");
 
-  // State untuk Data
-  List<Map<String, dynamic>> _filteredTransactions = [];
-  bool isLoading = true;
-
-  // State untuk Filter
+  final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
+
+  // 🔹 Data
+  List<Map<String, dynamic>> _transactions = [];
+  bool isLoading = false;
+  bool isLoadingMore = false;
+  bool hasMore = true;
+
+  // 🔹 Pagination
+  int _currentPage = 1;
+  int _lastPage = 1;
+
+  // 🔹 Filter
   String _searchTerm = '';
   DateTime? _startDate;
   DateTime? _endDate;
@@ -29,77 +36,97 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   @override
   void initState() {
     super.initState();
-    // Muat data saat inisialisasi tanpa filter
-    loadTransactions();
-
-    // Listener untuk pencarian langsung (optional, bisa juga pakai tombol search)
+    loadTransactions(); // Muat data pertama kali
     _searchController.addListener(_onSearchChanged);
+
+    // 🔹 Tambah listener scroll untuk pagination
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 200 &&
+          !isLoadingMore &&
+          hasMore) {
+        _loadMoreTransactions();
+      }
+    });
   }
 
   @override
   void dispose() {
-    _searchController.removeListener(_onSearchChanged);
+    _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  // Dipanggil setiap kali teks pencarian berubah
+  // 🔹 Ketika teks pencarian berubah
   void _onSearchChanged() {
-    if (_searchController.text != _searchTerm) {
-      _searchTerm = _searchController.text;
-      // Debounce atau langsung panggil loadTransactions
-      // Untuk contoh ini, kita panggil langsung:
-      loadTransactions(
-        search: _searchTerm,
-        startDate: _startDate,
-        endDate: _endDate,
-      );
+    final term = _searchController.text.trim();
+    if (term != _searchTerm) {
+      _searchTerm = term;
+      _refreshTransactions();
     }
   }
 
-  // Metode pemuatan data utama dengan parameter filter
+  // 🔹 Ambil data pertama (page 1)
   Future<void> loadTransactions({
     String? search,
     DateTime? startDate,
     DateTime? endDate,
   }) async {
-    // Jangan tampilkan indicator jika data sudah ada, kecuali pull-to-refresh
-    if (_filteredTransactions.isEmpty) {
-      setState(() => isLoading = true);
-    }
-
+    setState(() => isLoading = true);
     try {
-      // ✅ Mengirim parameter filter ke service
-      final data = await _service.fetchTransactions(
+      final result = await _service.fetchTransactions(
+        page: 1,
         searchTerm: search,
         startDate: startDate,
         endDate: endDate,
       );
 
-      if (mounted) {
-        setState(() {
-          _filteredTransactions = data;
-          isLoading = false;
-          // Tentukan status filter aktif
-          _isFiltering =
-              (search?.isNotEmpty == true ||
-              startDate != null ||
-              endDate != null);
-        });
-      }
+      setState(() {
+        _transactions = result['transactions'];
+        _currentPage = result['current_page'];
+        _lastPage = result['last_page'];
+        hasMore = _currentPage < _lastPage;
+        isLoading = false;
+        _isFiltering =
+            (search?.isNotEmpty == true ||
+            startDate != null ||
+            endDate != null);
+      });
     } catch (e) {
-      debugPrint('Error loading transactions: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal memuat transaksi: ${e.toString()}')),
-        );
-        setState(() => isLoading = false);
-      }
+      setState(() => isLoading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Gagal memuat transaksi: $e')));
     }
   }
 
-  // Public method untuk refresh data
-  Future<void> refreshData() async {
+  // 🔹 Load halaman berikutnya
+  Future<void> _loadMoreTransactions() async {
+    if (_currentPage >= _lastPage) return;
+    setState(() => isLoadingMore = true);
+
+    try {
+      final nextPage = _currentPage + 1;
+      final result = await _service.fetchTransactions(
+        page: nextPage,
+        searchTerm: _searchTerm,
+        startDate: _startDate,
+        endDate: _endDate,
+      );
+
+      setState(() {
+        _transactions.addAll(result['transactions']);
+        _currentPage = result['current_page'];
+        hasMore = _currentPage < _lastPage;
+        isLoadingMore = false;
+      });
+    } catch (e) {
+      setState(() => isLoadingMore = false);
+    }
+  }
+
+  // 🔹 Refresh manual (pull-to-refresh)
+  Future<void> _refreshTransactions() async {
     await loadTransactions(
       search: _searchTerm,
       startDate: _startDate,
@@ -107,7 +134,9 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     );
   }
 
-  // Pemilih Tanggal
+  Future<void> refreshData() => _refreshTransactions();
+
+  // 🔹 Pilih tanggal
   Future<void> _selectDate(
     BuildContext context, {
     required bool isStart,
@@ -115,8 +144,8 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: isStart
-          ? _startDate ?? DateTime.now()
-          : _endDate ?? DateTime.now(),
+          ? (_startDate ?? DateTime.now())
+          : (_endDate ?? DateTime.now()),
       firstDate: DateTime(2000),
       lastDate: DateTime(2030),
     );
@@ -129,16 +158,11 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
           _endDate = picked;
         }
       });
-      // Setelah memilih tanggal, muat ulang data
-      loadTransactions(
-        search: _searchTerm,
-        startDate: _startDate,
-        endDate: _endDate,
-      );
+      _refreshTransactions();
     }
   }
 
-  // Reset Filter
+  // 🔹 Reset semua filter
   void _resetFilters() {
     setState(() {
       _searchController.clear();
@@ -147,11 +171,10 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
       _endDate = null;
       _isFiltering = false;
     });
-    // Muat ulang data tanpa filter
-    loadTransactions();
+    _refreshTransactions();
   }
 
-  // Widget untuk menampilkan badge status
+  // 🔹 Badge status
   Widget _buildStatusBadge(String status) {
     Color color;
     switch (status.toLowerCase()) {
@@ -187,118 +210,15 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    Widget content;
-    if (isLoading && _filteredTransactions.isEmpty) {
-      content = const Center(child: CircularProgressIndicator());
-    } else if (_filteredTransactions.isEmpty) {
-      content = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.info_outline, size: 48, color: Colors.grey),
-              const SizedBox(height: 16),
-              Text(
-                _isFiltering
-                    ? 'Tidak ada transaksi yang cocok dengan filter.'
-                    : 'Belum ada transaksi.',
-                style: const TextStyle(fontSize: 16, color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: _resetFilters,
-                icon: const Icon(Icons.clear),
-                label: const Text('Hapus Filter & Muat Ulang'),
-              ),
-            ],
-          ),
-        ),
-      );
-    } else {
-      // ✅ Menggunakan ListView.builder untuk menampilkan data
-      content = ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _filteredTransactions.length,
-        itemBuilder: (context, index) {
-          final t = _filteredTransactions[index];
-          // Menggunakan Card untuk tampilan yang lebih terstruktur
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                vertical: 8,
-                horizontal: 16,
-              ),
-              title: Text(
-                t['invoice_number'] ?? 'N/A',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("Customer: ${t['customer']?['name'] ?? '-'}"),
-                      _buildStatusBadge(t['status'] ?? 'N/A'),
-                    ],
-                  ),
-                  Text("Cashier: ${t['user']?['name'] ?? '-'}"),
-                  Text(
-                    "Total: Rp${_formatter.format(t['grand_total'] ?? 0)}",
-                    style: TextStyle(
-                      color: Colors.green.shade700,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    "Tgl: ${DateFormat('dd MMM yyyy').format(DateTime.parse(t['created_at']))}",
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-              trailing: const Icon(
-                Icons.arrow_forward_ios,
-                size: 16,
-                color: Colors.grey,
-              ),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) =>
-                        DetailTransactionScreen(transactionData: t),
-                  ),
-                ).then(
-                  (_) => refreshData(),
-                ); // Refresh setelah kembali dari detail
-              },
-            ),
-          );
-        },
-      );
-    }
-
     return Scaffold(
       appBar: AppBar(title: const Text("Daftar Transaksi")),
       body: Column(
         children: [
-          // Filter Bar
+          // 🔹 Filter Bar
           Padding(
-            padding: const EdgeInsets.all(8.0),
+            padding: const EdgeInsets.all(8),
             child: Column(
               children: [
-                // Search Input
                 TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
@@ -307,29 +227,15 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
                     suffixIcon: _searchTerm.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
-                              _onSearchChanged();
-                            },
+                            onPressed: _resetFilters,
                           )
                         : null,
                     border: const OutlineInputBorder(
                       borderRadius: BorderRadius.all(Radius.circular(10)),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                  ),
-                  onSubmitted: (value) => loadTransactions(
-                    search: value,
-                    startDate: _startDate,
-                    endDate: _endDate,
                   ),
                 ),
                 const SizedBox(height: 8),
-
-                // Date Range & Reset Button
                 Row(
                   children: [
                     Expanded(
@@ -357,7 +263,6 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
                     ),
                     if (_isFiltering) ...[
                       const SizedBox(width: 8),
-                      // Reset Button
                       IconButton(
                         icon: const Icon(Icons.clear, color: Colors.red),
                         tooltip: 'Reset Filter',
@@ -370,14 +275,123 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
             ),
           ),
 
-          // Data List
+          // 🔹 Data List
           Expanded(
-            // Menggunakan RefreshIndicator di sini agar hanya list yang bisa ditarik
-            child: RefreshIndicator(onRefresh: refreshData, child: content),
+            child: RefreshIndicator(
+              onRefresh: _refreshTransactions,
+              child: isLoading && _transactions.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : _transactions.isEmpty
+                  ? const Center(child: Text("Belum ada transaksi"))
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _transactions.length + (isLoadingMore ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == _transactions.length) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(16),
+                              child: CircularProgressIndicator(),
+                            ),
+                          );
+                        }
+
+                        final t = _transactions[index];
+                        final no = index + 1; // ✅ Nomor urut mulai dari 1
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 16,
+                            ),
+                            // ✅ Tambahkan nomor urut di depan invoice
+                            title: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: Colors.blue.shade700,
+                                  child: Text(
+                                    '$no',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    t['invoice_number'] ?? 'N/A',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      "Customer: ${t['customer']?['name'] ?? '-'}",
+                                    ),
+                                    _buildStatusBadge(t['status'] ?? 'N/A'),
+                                  ],
+                                ),
+                                Text("Cashier: ${t['user']?['name'] ?? '-'}"),
+                                Text(
+                                  "Total: Rp${_formatter.format(t['grand_total'] ?? 0)}",
+                                  style: TextStyle(
+                                    color: Colors.green.shade700,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  "Tgl: ${DateFormat('dd MMM yyyy').format(DateTime.parse(t['created_at']))}",
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            trailing: const Icon(
+                              Icons.arrow_forward_ios,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => DetailTransactionScreen(
+                                    transactionData: t,
+                                  ),
+                                ),
+                              ).then((_) => _refreshTransactions());
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
           ),
         ],
       ),
-      // FloatingActionButton dipertahankan, asumsikan berfungsi untuk navigasi ke tab pembuatan
     );
   }
 }

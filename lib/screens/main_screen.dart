@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:laravelappmobile/screens/index_transaction_screen.dart';
 import 'create_transaction_screen.dart';
-// import rekap dan setting screen jika ada
 // import 'rekap_screen.dart';
 // import 'setting_screen.dart';
 
@@ -15,12 +14,12 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  // ✅ GlobalKey untuk mengakses state IndexTransactionScreenState
-  final GlobalKey<IndexTransactionScreenState> indexScreenKey = GlobalKey();
+  // ✅ Gunakan GlobalKey untuk mengakses IndexTransactionScreenState dari luar
+  final GlobalKey<IndexTransactionScreenState> _indexScreenKey = GlobalKey();
 
+  // Fungsi untuk menangani klik pada item bottom navigation
   void _onItemTapped(int index) {
-    // Memastikan refresh dipanggil setelah tab berpindah ke Index (0)
-    final shouldRefresh = index == 0;
+    final isIndexTab = index == 0;
 
     if (index != _selectedIndex) {
       setState(() {
@@ -28,20 +27,18 @@ class _MainScreenState extends State<MainScreen> {
       });
     }
 
-    // ✅ PANGGIL REFRESH jika tab yang dipilih adalah Index
-    if (shouldRefresh && indexScreenKey.currentState != null) {
-      indexScreenKey.currentState!.refreshData();
+    // ✅ Jika kembali ke tab Index, refresh otomatis
+    if (isIndexTab && _indexScreenKey.currentState != null) {
+      _indexScreenKey.currentState!.refreshData();
     }
   }
 
-  // ✅ FIX ERROR: Gunakan 'late final' dan tetapkan GlobalKey
+  // ✅ Gunakan late final agar hanya diinisialisasi sekali
   late final List<Widget> _screens = [
-    // Menetapkan key agar state-nya bisa diakses
-    IndexTransactionScreen(key: indexScreenKey),
-    // Meneruskan _onItemTapped(0) sebagai callback sukses
+    IndexTransactionScreen(key: _indexScreenKey),
     CreateTransactionScreen(onTransactionSuccess: () => _onItemTapped(0)),
-    const Center(child: Text("Rekap Screen")), // placeholder
-    const Center(child: Text("Setting Screen")), // placeholder
+    const Center(child: Text("📊 Rekap Screen (Coming Soon)")),
+    const Center(child: Text("⚙️ Setting Screen (Coming Soon)")),
   ];
 
   final List<BottomNavigationBarItem> _bottomItems = const [
@@ -54,12 +51,16 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // ✅ IndexedStack memastikan state antar-tab tetap dipertahankan
       body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: BottomNavigationBar(
         items: _bottomItems,
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed,
         onTap: _onItemTapped,
+        selectedItemColor: Colors.blueAccent,
+        unselectedItemColor: Colors.grey,
+        showUnselectedLabels: true,
       ),
     );
   }

@@ -33,46 +33,84 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   double discount = 0;
   double paidAmount = 0;
   bool isLoading = true;
+  bool isLoadingMore = false;
+  bool hasMore = true;
+  int currentPage = 1;
+  final int limit = 20;
 
   final TextEditingController discountController = TextEditingController();
   final TextEditingController paidAmountController = TextEditingController();
   final TextEditingController searchController = TextEditingController();
-
-  // Pagination control
-  int itemsPerPage = 5;
-  int currentPage = 0;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     loadCreateData();
+    _scrollController.addListener(_onScroll);
   }
 
-  Future<void> loadCreateData() async {
-    try {
-      final response = await _service.fetchCreateData();
-      final data = response['data'];
-      setState(() {
-        customers = data['customers'];
-        users = data['users'];
-        paymentMethods = data['paymentMethods'];
-        products = data['products'];
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent - 200 &&
+        !isLoadingMore &&
+        hasMore) {
+      setState(() => currentPage++);
+      loadCreateData(loadMore: true);
+    }
+  }
 
-        selectedCustomer = customers.firstWhere(
+  Future<void> loadCreateData({bool loadMore = false}) async {
+    try {
+      if (loadMore) {
+        setState(() => isLoadingMore = true);
+      } else {
+        setState(() {
+          isLoading = true;
+          hasMore = true;
+          currentPage = 1;
+          products.clear();
+        });
+      }
+
+      final response = await _service.fetchCreateData(
+        page: currentPage,
+        limit: limit,
+      );
+      final data = response['data'];
+
+      setState(() {
+        if (!loadMore) {
+          customers = data['customers'];
+          users = data['users'];
+          paymentMethods = data['paymentMethods'];
+          products = data['products'];
+        } else {
+          final newProducts = data['products'];
+          if (newProducts.isNotEmpty) {
+            products.addAll(newProducts);
+          } else {
+            hasMore = false;
+          }
+        }
+
+        selectedCustomer ??= customers.firstWhere(
           (c) => c['name'] == 'Pelanggan Umum',
         )['id'];
-        selectedUser = users.firstWhere(
+        selectedUser ??= users.firstWhere(
           (u) => u['name'] == 'Administrator Toko',
         )['id'];
-        selectedPayment = paymentMethods.firstWhere(
+        selectedPayment ??= paymentMethods.firstWhere(
           (p) => p['name'].toLowerCase() == 'cash',
         )['id'];
-
-        isLoading = false;
       });
     } catch (e) {
       debugPrint('Error load data: $e');
-      setState(() => isLoading = false);
+    } finally {
+      setState(() {
+        isLoading = false;
+        isLoadingMore = false;
+      });
     }
   }
 
@@ -126,6 +164,7 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
     discountController.dispose();
     paidAmountController.dispose();
     searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -135,18 +174,10 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // Filtering produk berdasarkan pencarian
     final filteredProducts = products.where((p) {
       final query = searchController.text.toLowerCase();
       return p['name'].toString().toLowerCase().contains(query);
     }).toList();
-
-    // Pagination
-    int totalPages = (filteredProducts.length / itemsPerPage).ceil();
-    final paginatedProducts = filteredProducts
-        .skip(currentPage * itemsPerPage)
-        .take(itemsPerPage)
-        .toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text("Create Transaction")),
@@ -155,53 +186,53 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // =============================
-            // 🧍 Dropdown Customer, User, Payment
-            // =============================
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "Customer"),
               value: selectedCustomer,
-              items: customers.map((c) {
-                return DropdownMenuItem<int>(
-                  value: c['id'],
-                  child: Text(c['name']),
-                );
-              }).toList(),
+              items: customers
+                  .map(
+                    (c) => DropdownMenuItem<int>(
+                      value: c['id'],
+                      child: Text(c['name']),
+                    ),
+                  )
+                  .toList(),
               onChanged: (v) => setState(() => selectedCustomer = v),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "User"),
               value: selectedUser,
-              items: users.map((u) {
-                return DropdownMenuItem<int>(
-                  value: u['id'],
-                  child: Text(u['name']),
-                );
-              }).toList(),
+              items: users
+                  .map(
+                    (u) => DropdownMenuItem<int>(
+                      value: u['id'],
+                      child: Text(u['name']),
+                    ),
+                  )
+                  .toList(),
               onChanged: (v) => setState(() => selectedUser = v),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "Payment Method"),
               value: selectedPayment,
-              items: paymentMethods.map((p) {
-                return DropdownMenuItem<int>(
-                  value: p['id'],
-                  child: Text(p['name']),
-                );
-              }).toList(),
+              items: paymentMethods
+                  .map(
+                    (p) => DropdownMenuItem<int>(
+                      value: p['id'],
+                      child: Text(p['name']),
+                    ),
+                  )
+                  .toList(),
               onChanged: (v) => setState(() => selectedPayment = v),
             ),
-
             const Divider(height: 32),
             const Text(
               "Cari & Tambah Produk",
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-
-            // 🔍 Pencarian produk
             TextField(
               controller: searchController,
               decoration: const InputDecoration(
@@ -209,15 +240,11 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                 prefixIcon: Icon(Icons.search),
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) => setState(() {
-                currentPage = 0;
-              }),
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 8),
 
-            // =============================
-            // 📋 Daftar Produk dengan pagination
-            // =============================
+            // 🧾 DAFTAR PRODUK
             Container(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey.shade300),
@@ -230,6 +257,7 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: const Row(
                       children: [
+                        Expanded(flex: 1, child: Center(child: Text("No"))),
                         Expanded(flex: 4, child: Center(child: Text("Nama"))),
                         Expanded(flex: 3, child: Center(child: Text("Harga"))),
                         Expanded(flex: 2, child: Center(child: Text("Aksi"))),
@@ -239,9 +267,21 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                   SizedBox(
                     height: 250,
                     child: ListView.builder(
-                      itemCount: paginatedProducts.length,
+                      controller: _scrollController,
+                      itemCount:
+                          filteredProducts.length + (isLoadingMore ? 1 : 0),
                       itemBuilder: (context, index) {
-                        final p = paginatedProducts[index];
+                        if (index == filteredProducts.length) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(8),
+                              child: CircularProgressIndicator(),
+                            ),
+                          );
+                        }
+
+                        final p = filteredProducts[index];
+                        final number = index + 1;
                         return Container(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           decoration: const BoxDecoration(
@@ -249,6 +289,10 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                           ),
                           child: Row(
                             children: [
+                              Expanded(
+                                flex: 1,
+                                child: Center(child: Text("$number")),
+                              ),
                               Expanded(flex: 4, child: Text(p['name'])),
                               Expanded(
                                 flex: 3,
@@ -273,33 +317,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                       },
                     ),
                   ),
-
-                  // 🔹 Pagination control
-                  if (totalPages > 1)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back_ios, size: 18),
-                            onPressed: currentPage > 0
-                                ? () => setState(() => currentPage--)
-                                : null,
-                          ),
-                          Text(
-                            "Halaman ${currentPage + 1} dari $totalPages",
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.arrow_forward_ios, size: 18),
-                            onPressed: currentPage < totalPages - 1
-                                ? () => setState(() => currentPage++)
-                                : null,
-                          ),
-                        ],
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -310,10 +327,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-
-            // =============================
-            // 🧾 Produk Dipilih dengan scroll
-            // =============================
             Container(
               constraints: const BoxConstraints(maxHeight: 250),
               child: SingleChildScrollView(
@@ -433,12 +446,14 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     customerId: selectedCustomer!,
                     userId: selectedUser!,
                     paymentMethodId: selectedPayment!,
-                    products: selectedProducts.map((item) {
-                      return {
-                        'product_id': item['product_id'],
-                        'quantity': item['quantity'],
-                      };
-                    }).toList(),
+                    products: selectedProducts
+                        .map(
+                          (item) => {
+                            'product_id': item['product_id'],
+                            'quantity': item['quantity'],
+                          },
+                        )
+                        .toList(),
                     discount: discount,
                     paidAmount: paidAmount,
                   );
