@@ -1,5 +1,8 @@
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:laravelappmobile/services/local_db_service.dart';
+import 'package:laravelappmobile/utils/connectivity_helper.dart';
 import '../services/transaction_service.dart';
 
 class CreateTransactionScreen extends StatefulWidget {
@@ -23,6 +26,7 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   List<dynamic> users = [];
   List<dynamic> paymentMethods = [];
   List<dynamic> products = [];
+  bool isOnline = true; // 🟢 status koneksi
 
   List<Map<String, dynamic>> selectedProducts = [];
 
@@ -46,8 +50,24 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   @override
   void initState() {
     super.initState();
+    _initConnectivityListener();
     loadCreateData();
     _scrollController.addListener(_onScroll);
+  }
+
+  void _initConnectivityListener() {
+    Connectivity().onConnectivityChanged.listen((
+      List<ConnectivityResult> results,
+    ) async {
+      final hasConnection =
+          results.isNotEmpty &&
+          results.any((r) => r != ConnectivityResult.none);
+      setState(() => isOnline = hasConnection);
+    });
+
+    ConnectivityHelper.hasConnection().then((value) {
+      setState(() => isOnline = value);
+    });
   }
 
   void _onScroll() {
@@ -186,6 +206,16 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(
+              isOnline
+                  ? "🟢 Terhubung ke server — transaksi disimpan langsung."
+                  : "🔴 Terputus — transaksi disimpan sementara (offline).",
+              style: TextStyle(
+                color: isOnline ? Colors.green : Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
             DropdownButtonFormField<int>(
               decoration: const InputDecoration(labelText: "Customer"),
               value: selectedCustomer,
@@ -441,46 +471,126 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                   return;
                 }
 
-                try {
-                  final result = await _service.createTransaction(
-                    customerId: selectedCustomer!,
-                    userId: selectedUser!,
-                    paymentMethodId: selectedPayment!,
-                    products: selectedProducts
-                        .map(
-                          (item) => {
-                            'product_id': item['product_id'],
-                            'quantity': item['quantity'],
-                          },
-                        )
-                        .toList(),
-                    discount: discount,
-                    paidAmount: paidAmount,
-                  );
+                final transactionData = {
+                  'customerId': selectedCustomer,
+                  'userId': selectedUser,
+                  'paymentMethodId': selectedPayment,
+                  'products': selectedProducts
+                      .map(
+                        (p) => {
+                          'product_id': p['product_id'],
+                          'quantity': p['quantity'],
+                        },
+                      )
+                      .toList(),
+                  'discount': discount,
+                  'paidAmount': paidAmount,
+                  'createdAt': DateTime.now().toIso8601String(),
+                };
 
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        result['message'] ?? 'Transaksi berhasil disimpan',
+                final isOnline = await ConnectivityHelper.hasConnection();
+
+                if (isOnline) {
+                  try {
+                    final result = await _service.createTransaction(
+                      customerId: selectedCustomer!,
+                      userId: selectedUser!,
+                      paymentMethodId: selectedPayment!,
+                      products: selectedProducts,
+                      discount: discount,
+                      paidAmount: paidAmount,
+                    );
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          result['message'] ?? 'Transaksi berhasil',
+                        ),
                       ),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Gagal online, simpan lokal: $e')),
+                    );
+                    await LocalDBService().saveOfflineTransaction(
+                      transactionData,
+                    );
+                  }
+                } else {
+                  await LocalDBService().saveOfflineTransaction(
+                    transactionData,
+                  );
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Offline — transaksi disimpan sementara'),
                     ),
                   );
-
-                  setState(() {
-                    selectedProducts.clear();
-                    discount = 0;
-                    paidAmount = 0;
-                    discountController.clear();
-                    paidAmountController.clear();
-                  });
-
-                  widget.onTransactionSuccess();
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Gagal menyimpan transaksi: $e')),
-                  );
                 }
+
+                setState(() {
+                  selectedProducts.clear();
+                  discount = 0;
+                  paidAmount = 0;
+                  discountController.clear();
+                  paidAmountController.clear();
+                });
+
+                widget.onTransactionSuccess();
               },
+
+              // onPressed: () async {
+              //   if (selectedCustomer == null ||
+              //       selectedUser == null ||
+              //       selectedPayment == null ||
+              //       selectedProducts.isEmpty) {
+              //     ScaffoldMessenger.of(context).showSnackBar(
+              //       const SnackBar(
+              //         content: Text('Lengkapi semua data transaksi'),
+              //       ),
+              //     );
+              //     return;
+              //   }
+
+              //   try {
+              //     final result = await _service.createTransaction(
+              //       customerId: selectedCustomer!,
+              //       userId: selectedUser!,
+              //       paymentMethodId: selectedPayment!,
+              //       products: selectedProducts
+              //           .map(
+              //             (item) => {
+              //               'product_id': item['product_id'],
+              //               'quantity': item['quantity'],
+              //             },
+              //           )
+              //           .toList(),
+              //       discount: discount,
+              //       paidAmount: paidAmount,
+              //     );
+
+              //     ScaffoldMessenger.of(context).showSnackBar(
+              //       SnackBar(
+              //         content: Text(
+              //           result['message'] ?? 'Transaksi berhasil disimpan',
+              //         ),
+              //       ),
+              //     );
+
+              //     setState(() {
+              //       selectedProducts.clear();
+              //       discount = 0;
+              //       paidAmount = 0;
+              //       discountController.clear();
+              //       paidAmountController.clear();
+              //     });
+
+              //     widget.onTransactionSuccess();
+              //   } catch (e) {
+              //     ScaffoldMessenger.of(context).showSnackBar(
+              //       SnackBar(content: Text('Gagal menyimpan transaksi: $e')),
+              //     );
+              //   }
+              // },
               child: const Text("Simpan Transaksi"),
             ),
           ],
