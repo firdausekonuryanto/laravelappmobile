@@ -369,55 +369,104 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                             orElse: () => {'name': 'Unknown', 'price': 0},
                           );
                           return Card(
-                            margin: const EdgeInsets.symmetric(vertical: 6),
-                            child: ListTile(
-                              title: Text(product['name']),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            margin: const EdgeInsets.symmetric(
+                              vertical: 6,
+                              horizontal: 8,
+                            ),
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12.0),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  Text(
-                                    "Harga: Rp${_formatter.format(product['price'])}",
-                                  ),
-                                  Row(
-                                    children: [
-                                      const Text("Qty: "),
-                                      SizedBox(
-                                        width: 60,
-                                        child: TextField(
-                                          keyboardType: TextInputType.number,
-                                          textAlign: TextAlign.center,
-                                          controller: TextEditingController(
-                                            text: item['quantity'].toString(),
+                                  // 🧾 Informasi produk
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          product['name'],
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
                                           ),
-                                          onChanged: (v) {
-                                            final qty = int.tryParse(v) ?? 1;
-                                            setState(() {
-                                              item['quantity'] = qty > 0
-                                                  ? qty
-                                                  : 1;
-                                            });
-                                          },
                                         ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        "Subtotal: Rp${_formatter.format(calculateSubtotal(item))}",
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          "Harga: Rp${_formatter.format(product['price'])}",
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey,
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(height: 8),
+                                        // Qty & Subtotal dalam satu baris
+                                        Row(
+                                          children: [
+                                            const Text("Qty: "),
+                                            SizedBox(
+                                              width: 55,
+                                              child: TextField(
+                                                keyboardType:
+                                                    TextInputType.number,
+                                                textAlign: TextAlign.center,
+                                                decoration:
+                                                    const InputDecoration(
+                                                      isDense: true,
+                                                      contentPadding:
+                                                          EdgeInsets.symmetric(
+                                                            vertical: 6,
+                                                          ),
+                                                      border:
+                                                          OutlineInputBorder(),
+                                                    ),
+                                                controller:
+                                                    TextEditingController(
+                                                      text: item['quantity']
+                                                          .toString(),
+                                                    ),
+                                                onChanged: (v) {
+                                                  final qty =
+                                                      int.tryParse(v) ?? 1;
+                                                  setState(() {
+                                                    item['quantity'] = qty > 0
+                                                        ? qty
+                                                        : 1;
+                                                  });
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                "Subtotal: Rp${_formatter.format(calculateSubtotal(item))}",
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.black87,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // 🗑 Tombol hapus
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline),
+                                    color: Colors.red.shade400,
+                                    tooltip: "Hapus produk",
+                                    onPressed: () => removeProduct(
+                                      selectedProducts.indexOf(item),
+                                    ),
                                   ),
                                 ],
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  color: Colors.red,
-                                ),
-                                onPressed: () => removeProduct(
-                                  selectedProducts.indexOf(item),
-                                ),
                               ),
                             ),
                           );
