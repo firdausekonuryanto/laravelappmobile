@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -74,19 +75,9 @@ class LocalDBService {
     ''');
   }
 
+  // 🔹 Bersihkan tabel utama
   Future<void> clearTables() async {
     final db = await database;
-    await db.delete('products');
-    await db.delete('product_categories');
-    await db.delete('suppliers');
-    await db.delete('customers');
-    await db.delete('payment_methods');
-  }
-
-  Future<void> saveSyncData(Map<String, dynamic> data) async {
-    final db = await database;
-    await clearTables();
-
     for (final table in [
       'products',
       'product_categories',
@@ -94,10 +85,31 @@ class LocalDBService {
       'customers',
       'payment_methods',
     ]) {
-      final list = List<Map<String, dynamic>>.from(data[table] ?? []);
-      for (final row in list) {
+      await db.delete(table);
+    }
+  }
+
+  // 🔹 Simpan hasil sync dari endpoint /sync-data
+  Future<void> saveSyncData(Map<String, dynamic> data) async {
+    final db = await database;
+    await clearTables();
+
+    final tables = {
+      'products': List<Map<String, dynamic>>.from(data['products'] ?? []),
+      'product_categories': List<Map<String, dynamic>>.from(
+        data['product_categories'] ?? [],
+      ),
+      'suppliers': List<Map<String, dynamic>>.from(data['suppliers'] ?? []),
+      'customers': List<Map<String, dynamic>>.from(data['customers'] ?? []),
+      'payment_methods': List<Map<String, dynamic>>.from(
+        data['payment_methods'] ?? [],
+      ),
+    };
+
+    for (final entry in tables.entries) {
+      for (final row in entry.value) {
         await db.insert(
-          table,
+          entry.key,
           row,
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
@@ -105,15 +117,34 @@ class LocalDBService {
     }
   }
 
+  // 🔹 Getter umum untuk offline mode
   Future<List<Map<String, dynamic>>> getProducts() async {
     final db = await database;
     return await db.query('products');
   }
 
+  Future<List<Map<String, dynamic>>> getCustomers() async {
+    final db = await database;
+    return await db.query('customers');
+  }
+
+  Future<List<Map<String, dynamic>>> getUsers() async {
+    // Kalau nanti kamu mau simpan user di lokal juga, tambahkan tabel users
+    return [
+      {'id': 1, 'name': 'Administrator Toko'},
+    ];
+  }
+
+  Future<List<Map<String, dynamic>>> getPaymentMethods() async {
+    final db = await database;
+    return await db.query('payment_methods');
+  }
+
+  // 🔹 Simpan transaksi offline
   Future<void> saveOfflineTransaction(Map<String, dynamic> data) async {
     final db = await database;
     await db.insert('transactions_pending', {
-      'data': data.toString(),
+      'data': jsonEncode(data), // ✅ simpan JSON valid
       'synced': 0,
     });
   }
@@ -131,5 +162,21 @@ class LocalDBService {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // 🔹 Untuk debug
+  Future<void> printTableCount() async {
+    final db = await database;
+    for (final table in [
+      'products',
+      'customers',
+      'payment_methods',
+      'transactions_pending',
+    ]) {
+      final count = Sqflite.firstIntValue(
+        await db.rawQuery('SELECT COUNT(*) FROM $table'),
+      );
+      print('[$table] -> $count rows');
+    }
   }
 }

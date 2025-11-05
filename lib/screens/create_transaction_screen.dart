@@ -62,7 +62,17 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
       final hasConnection =
           results.isNotEmpty &&
           results.any((r) => r != ConnectivityResult.none);
+
       setState(() => isOnline = hasConnection);
+
+      debugPrint(
+        '🌐 Status koneksi berubah: ${hasConnection ? 'Online' : 'Offline'}',
+      );
+      if (hasConnection) {
+        // hanya sync data tanpa clear list
+        debugPrint("🔁 Online kembali — mulai sync data...");
+        await loadCreateData(loadMore: false, isResync: true);
+      }
     });
 
     ConnectivityHelper.hasConnection().then((value) {
@@ -80,11 +90,15 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
     }
   }
 
-  Future<void> loadCreateData({bool loadMore = false}) async {
+  Future<void> loadCreateData({
+    bool loadMore = false,
+    bool isResync = false,
+  }) async {
     try {
       if (loadMore) {
         setState(() => isLoadingMore = true);
-      } else {
+      } else if (!isResync) {
+        // hanya reset total data jika bukan resync
         setState(() {
           isLoading = true;
           hasMore = true;
@@ -93,39 +107,71 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
         });
       }
 
-      final response = await _service.fetchCreateData(
-        page: currentPage,
-        limit: limit,
-      );
-      final data = response['data'];
+      final localDB = LocalDBService();
 
-      setState(() {
-        if (!loadMore) {
-          customers = data['customers'];
-          users = data['users'];
-          paymentMethods = data['paymentMethods'];
-          products = data['products'];
-        } else {
-          final newProducts = data['products'];
-          if (newProducts.isNotEmpty) {
-            products.addAll(newProducts);
+      if (isOnline) {
+        print("sedang online");
+        final response = await _service.fetchCreateData(
+          page: currentPage,
+          limit: limit,
+        );
+        final data = response['data'];
+
+        // Simpan ke SQLite untuk mode offline
+        await localDB.saveSyncData(data);
+
+        setState(() {
+          if (!loadMore && !isResync) {
+            customers = data['customers'];
+            users = data['users'];
+            paymentMethods = data['paymentMethods'];
+            products = data['products'];
+          } else if (isResync) {
+            // Saat resync, update data existing tanpa clear
+            products = data['products'];
           } else {
-            hasMore = false;
+            final newProducts = data['products'];
+            if (newProducts.isNotEmpty) {
+              products.addAll(newProducts);
+            } else {
+              hasMore = false;
+            }
           }
-        }
+        });
+      } else {
+        print("offline");
 
+        customers = await localDB.getCustomers();
+        users = await localDB.getUsers();
+        paymentMethods = await localDB.getPaymentMethods();
+        products = await localDB.getProducts();
+
+        debugPrint('📴 Mengambil data dari SQLite (offline)');
+      }
+
+      // Pilihan dropdown default
+      if (customers.isNotEmpty) {
         selectedCustomer ??= customers.firstWhere(
           (c) => c['name'] == 'Pelanggan Umum',
+          orElse: () => customers.first,
         )['id'];
+      }
+
+      if (users.isNotEmpty) {
         selectedUser ??= users.firstWhere(
           (u) => u['name'] == 'Administrator Toko',
+          orElse: () => users.first,
         )['id'];
+      }
+
+      if (paymentMethods.isNotEmpty) {
         selectedPayment ??= paymentMethods.firstWhere(
           (p) => p['name'].toLowerCase() == 'cash',
+          orElse: () => paymentMethods.first,
         )['id'];
-      });
+      }
     } catch (e) {
-      debugPrint('Error load data: $e');
+      debugPrint('❌ Error load data: $e');
     } finally {
       setState(() {
         isLoading = false;

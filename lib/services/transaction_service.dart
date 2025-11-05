@@ -28,6 +28,17 @@ class TransactionService {
     }
   }
 
+  Future<Map<String, dynamic>> fetchSyncData() async {
+    final response = await http.get(
+      Uri.parse('http://192.168.18.15:8001/api/sync-data'),
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Gagal mengambil data sinkronisasi');
+    }
+  }
+
   // ✅ Tambahkan parameter [page] dan [limit]
   Future<Map<String, dynamic>> fetchCreateData({
     int page = 1,
