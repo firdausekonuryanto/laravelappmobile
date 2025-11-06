@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/rendering.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -75,7 +76,6 @@ class LocalDBService {
     ''');
   }
 
-  // 🔹 Bersihkan tabel utama
   Future<void> clearTables() async {
     final db = await database;
     for (final table in [
@@ -89,9 +89,9 @@ class LocalDBService {
     }
   }
 
-  // 🔹 Simpan hasil sync dari endpoint /sync-data
   Future<void> saveSyncData(Map<String, dynamic> data) async {
     final db = await database;
+
     await clearTables();
 
     final tables = {
@@ -101,23 +101,30 @@ class LocalDBService {
       ),
       'suppliers': List<Map<String, dynamic>>.from(data['suppliers'] ?? []),
       'customers': List<Map<String, dynamic>>.from(data['customers'] ?? []),
+
       'payment_methods': List<Map<String, dynamic>>.from(
-        data['payment_methods'] ?? [],
+        data['paymentMethods'] ?? [],
       ),
     };
 
     for (final entry in tables.entries) {
+      final batch = db.batch();
+
       for (final row in entry.value) {
-        await db.insert(
+        batch.insert(
           entry.key,
           row,
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
+
+      await batch.commit(noResult: true);
+      debugPrint(
+        '✅ Tersimpan ${entry.value.length} data ke tabel ${entry.key}',
+      );
     }
   }
 
-  // 🔹 Getter umum untuk offline mode
   Future<List<Map<String, dynamic>>> getProducts() async {
     final db = await database;
     return await db.query('products');
@@ -129,7 +136,6 @@ class LocalDBService {
   }
 
   Future<List<Map<String, dynamic>>> getUsers() async {
-    // Kalau nanti kamu mau simpan user di lokal juga, tambahkan tabel users
     return [
       {'id': 1, 'name': 'Administrator Toko'},
     ];
@@ -140,11 +146,10 @@ class LocalDBService {
     return await db.query('payment_methods');
   }
 
-  // 🔹 Simpan transaksi offline
   Future<void> saveOfflineTransaction(Map<String, dynamic> data) async {
     final db = await database;
     await db.insert('transactions_pending', {
-      'data': jsonEncode(data), // ✅ simpan JSON valid
+      'data': jsonEncode(data),
       'synced': 0,
     });
   }
@@ -164,7 +169,6 @@ class LocalDBService {
     );
   }
 
-  // 🔹 Untuk debug
   Future<void> printTableCount() async {
     final db = await database;
     for (final table in [

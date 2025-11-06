@@ -7,7 +7,6 @@ import 'package:intl/intl.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class TransactionService {
-  // ⚠️ Kalau pakai emulator Android, ganti ke 10.0.2.2
   String get baseUrl =>
       dotenv.env['API_BASE_URL'] ?? 'http://10.0.2.2:8001/api';
 
@@ -39,13 +38,12 @@ class TransactionService {
     }
   }
 
-  // ✅ Tambahkan parameter [page] dan [limit]
   Future<Map<String, dynamic>> fetchCreateData({
     int page = 1,
-    int limit = 5,
+    int limit = 20,
   }) async {
-    final uri = Uri.parse('$baseUrl/transactions/create').replace(
-      queryParameters: {'page': page.toString(), 'limit': limit.toString()},
+    final uri = Uri.parse(
+      '$baseUrl/transactions/create?page=$page&limit=$limit',
     );
 
     final response = await http.get(uri);
@@ -101,9 +99,8 @@ class TransactionService {
     String? searchTerm,
     DateTime? startDate,
     DateTime? endDate,
-    int page = 1, // ✅ Tambah parameter halaman
+    int page = 1,
   }) async {
-    // 1. Siapkan query parameters
     final Map<String, String> queryParams = {'page': page.toString()};
 
     if (searchTerm != null && searchTerm.isNotEmpty) {
@@ -118,12 +115,10 @@ class TransactionService {
       queryParams['endDate'] = DateFormat('yyyy-MM-dd').format(endDate);
     }
 
-    // 2. Buat URL
     final uri = Uri.parse(
       '$baseUrl/transactions',
     ).replace(queryParameters: queryParams);
 
-    // 3. Lakukan HTTP GET
     final response = await http.get(
       uri,
       headers: {'Content-Type': 'application/json'},
@@ -133,13 +128,10 @@ class TransactionService {
       final jsonResponse = json.decode(response.body);
       print('📦 Response paginate: $jsonResponse');
 
-      // ✅ Ambil bagian utama
       final pageData = jsonResponse['data'];
 
-      // ✅ Ambil daftar transaksi
       final List<dynamic> transactions = pageData['data'] ?? [];
 
-      // ✅ Return dengan meta pagination
       return {
         'transactions': List<Map<String, dynamic>>.from(transactions),
         'current_page': pageData['current_page'],

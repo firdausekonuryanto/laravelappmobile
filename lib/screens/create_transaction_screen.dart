@@ -26,7 +26,7 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
   List<dynamic> users = [];
   List<dynamic> paymentMethods = [];
   List<dynamic> products = [];
-  bool isOnline = true; // 🟢 status koneksi
+  bool isOnline = true;
 
   List<Map<String, dynamic>> selectedProducts = [];
 
@@ -69,7 +69,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
         '🌐 Status koneksi berubah: ${hasConnection ? 'Online' : 'Offline'}',
       );
       if (hasConnection) {
-        // hanya sync data tanpa clear list
         debugPrint("🔁 Online kembali — mulai sync data...");
         await loadCreateData(loadMore: false, isResync: true);
       }
@@ -95,61 +94,59 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
     bool isResync = false,
   }) async {
     try {
-      if (loadMore) {
-        setState(() => isLoadingMore = true);
-      } else if (!isResync) {
-        // hanya reset total data jika bukan resync
-        setState(() {
-          isLoading = true;
-          hasMore = true;
-          currentPage = 1;
-          products.clear();
-        });
-      }
-
       final localDB = LocalDBService();
 
       if (isOnline) {
-        print("sedang online");
-        final response = await _service.fetchCreateData(
-          page: currentPage,
-          limit: limit,
-        );
-        final data = response['data'];
+        print("🟢 Online — mulai sync data dari server...");
 
-        // Simpan ke SQLite untuk mode offline
-        await localDB.saveSyncData(data);
+        List allProducts = [];
+        int page = 1;
+        bool hasMorePages = true;
+
+        Map<String, dynamic> firstPageData = {};
+
+        while (hasMorePages) {
+          final response = await _service.fetchCreateData(
+            page: page,
+            limit: limit,
+          );
+          final data = response['data'];
+
+          if (page == 1) {
+            firstPageData = data;
+          }
+
+          final productsPage = data['products'] ?? [];
+          hasMorePages = data['hasMore'] ?? false;
+
+          allProducts.addAll(productsPage);
+          page++;
+        }
+
+        final mergedData = {
+          'customers': firstPageData['customers'] ?? [],
+          'users': firstPageData['users'] ?? [],
+          'paymentMethods': firstPageData['paymentMethods'] ?? [],
+          'products': allProducts,
+        };
+
+        await localDB.saveSyncData(mergedData);
 
         setState(() {
-          if (!loadMore && !isResync) {
-            customers = data['customers'];
-            users = data['users'];
-            paymentMethods = data['paymentMethods'];
-            products = data['products'];
-          } else if (isResync) {
-            // Saat resync, update data existing tanpa clear
-            products = data['products'];
-          } else {
-            final newProducts = data['products'];
-            if (newProducts.isNotEmpty) {
-              products.addAll(newProducts);
-            } else {
-              hasMore = false;
-            }
-          }
+          customers = mergedData['customers'];
+          users = mergedData['users'];
+          paymentMethods = mergedData['paymentMethods'];
+          products = mergedData['products'];
         });
       } else {
-        print("offline");
+        print("📴 Offline — load data dari SQLite");
 
         customers = await localDB.getCustomers();
         users = await localDB.getUsers();
         paymentMethods = await localDB.getPaymentMethods();
         products = await localDB.getProducts();
-
-        debugPrint('📴 Mengambil data dari SQLite (offline)');
       }
 
-      // Pilihan dropdown default
       if (customers.isNotEmpty) {
         selectedCustomer ??= customers.firstWhere(
           (c) => c['name'] == 'Pelanggan Umum',
@@ -169,6 +166,12 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
           (p) => p['name'].toLowerCase() == 'cash',
           orElse: () => paymentMethods.first,
         )['id'];
+      } else {
+        print("🔴 Offline — ambil data dari SQLite");
+        customers = await localDB.getCustomers();
+        users = await localDB.getUsers();
+        paymentMethods = await localDB.getPaymentMethods();
+        products = await localDB.getProducts();
       }
     } catch (e) {
       debugPrint('❌ Error load data: $e');
@@ -247,448 +250,417 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text("Create Transaction")),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              isOnline
-                  ? "🟢 Terhubung ke server — transaksi disimpan langsung."
-                  : "🔴 Terputus — transaksi disimpan sementara (offline).",
-              style: TextStyle(
-                color: isOnline ? Colors.green : Colors.red,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              decoration: const InputDecoration(labelText: "Customer"),
-              value: selectedCustomer,
-              items: customers
-                  .map(
-                    (c) => DropdownMenuItem<int>(
-                      value: c['id'],
-                      child: Text(c['name']),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() => selectedCustomer = v),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              decoration: const InputDecoration(labelText: "User"),
-              value: selectedUser,
-              items: users
-                  .map(
-                    (u) => DropdownMenuItem<int>(
-                      value: u['id'],
-                      child: Text(u['name']),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() => selectedUser = v),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              decoration: const InputDecoration(labelText: "Payment Method"),
-              value: selectedPayment,
-              items: paymentMethods
-                  .map(
-                    (p) => DropdownMenuItem<int>(
-                      value: p['id'],
-                      child: Text(p['name']),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() => selectedPayment = v),
-            ),
-            const Divider(height: 32),
-            const Text(
-              "Cari & Tambah Produk",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: searchController,
-              decoration: const InputDecoration(
-                labelText: "Cari produk...",
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 8),
-
-            // 🧾 DAFTAR PRODUK
-            Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                children: [
-                  Container(
-                    color: Colors.grey.shade200,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: const Row(
-                      children: [
-                        Expanded(flex: 1, child: Center(child: Text("No"))),
-                        Expanded(flex: 4, child: Center(child: Text("Nama"))),
-                        Expanded(flex: 3, child: Center(child: Text("Harga"))),
-                        Expanded(flex: 2, child: Center(child: Text("Aksi"))),
-                      ],
-                    ),
-                  ),
-                  SizedBox(
-                    height: 250,
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      itemCount:
-                          filteredProducts.length + (isLoadingMore ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == filteredProducts.length) {
-                          return const Center(
-                            child: Padding(
-                              padding: EdgeInsets.all(8),
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        }
-
-                        final p = filteredProducts[index];
-                        final number = index + 1;
-                        return Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          decoration: const BoxDecoration(
-                            border: Border(top: BorderSide(color: Colors.grey)),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                flex: 1,
-                                child: Center(child: Text("$number")),
-                              ),
-                              Expanded(flex: 4, child: Text(p['name'])),
-                              Expanded(
-                                flex: 3,
-                                child: Text(
-                                  "Rp${_formatter.format(p['price'])}",
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                              Expanded(
-                                flex: 2,
-                                child: IconButton(
-                                  icon: const Icon(
-                                    Icons.add_circle,
-                                    color: Colors.blue,
-                                  ),
-                                  onPressed: () => addProductFromList(p),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const Divider(height: 32),
-            const Text(
-              "Produk Dipilih",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              constraints: const BoxConstraints(maxHeight: 250),
-              child: SingleChildScrollView(
-                child: Column(
-                  children: selectedProducts.isEmpty
-                      ? [const Text('Belum ada produk dipilih.')]
-                      : selectedProducts.map((item) {
-                          final product = products.firstWhere(
-                            (p) => p['id'] == item['product_id'],
-                            orElse: () => {'name': 'Unknown', 'price': 0},
-                          );
-                          return Card(
-                            margin: const EdgeInsets.symmetric(
-                              vertical: 6,
-                              horizontal: 8,
-                            ),
-                            elevation: 2,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  // 🧾 Informasi produk
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          product['name'],
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          "Harga: Rp${_formatter.format(product['price'])}",
-                                          style: const TextStyle(
-                                            fontSize: 14,
-                                            color: Colors.grey,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        // Qty & Subtotal dalam satu baris
-                                        Row(
-                                          children: [
-                                            const Text("Qty: "),
-                                            SizedBox(
-                                              width: 55,
-                                              child: TextField(
-                                                keyboardType:
-                                                    TextInputType.number,
-                                                textAlign: TextAlign.center,
-                                                decoration:
-                                                    const InputDecoration(
-                                                      isDense: true,
-                                                      contentPadding:
-                                                          EdgeInsets.symmetric(
-                                                            vertical: 6,
-                                                          ),
-                                                      border:
-                                                          OutlineInputBorder(),
-                                                    ),
-                                                controller:
-                                                    TextEditingController(
-                                                      text: item['quantity']
-                                                          .toString(),
-                                                    ),
-                                                onChanged: (v) {
-                                                  final qty =
-                                                      int.tryParse(v) ?? 1;
-                                                  setState(() {
-                                                    item['quantity'] = qty > 0
-                                                        ? qty
-                                                        : 1;
-                                                  });
-                                                },
-                                              ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Text(
-                                                "Subtotal: Rp${_formatter.format(calculateSubtotal(item))}",
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.w600,
-                                                  color: Colors.black87,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
-                                  // 🗑 Tombol hapus
-                                  IconButton(
-                                    icon: const Icon(Icons.delete_outline),
-                                    color: Colors.red.shade400,
-                                    tooltip: "Hapus produk",
-                                    onPressed: () => removeProduct(
-                                      selectedProducts.indexOf(item),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          setState(() {
+            isLoading = true;
+            currentPage = 1;
+            hasMore = true;
+          });
+          await loadCreateData(loadMore: false, isResync: true);
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isOnline
+                    ? "🟢 Terhubung ke server — transaksi disimpan langsung."
+                    : "🔴 Terputus — transaksi disimpan sementara (offline).",
+                style: TextStyle(
+                  color: isOnline ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
-
-            const Divider(height: 32),
-            TextFormField(
-              controller: discountController,
-              decoration: const InputDecoration(labelText: "Diskon (Rp)"),
-              keyboardType: TextInputType.number,
-              onChanged: (v) =>
-                  setState(() => discount = double.tryParse(v) ?? 0),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Total: Rp${_formatter.format(calculateGrandTotal())}",
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: paidAmountController,
-              decoration: const InputDecoration(labelText: "Uang Dibayar (Rp)"),
-              keyboardType: TextInputType.number,
-              onChanged: (v) =>
-                  setState(() => paidAmount = double.tryParse(v) ?? 0),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Kembalian: Rp${_formatter.format(calculateChange())}",
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.green,
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                decoration: const InputDecoration(labelText: "Customer"),
+                value: selectedCustomer,
+                items: customers
+                    .map(
+                      (c) => DropdownMenuItem<int>(
+                        value: c['id'],
+                        child: Text(c['name']),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => selectedCustomer = v),
               ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () async {
-                if (selectedCustomer == null ||
-                    selectedUser == null ||
-                    selectedPayment == null ||
-                    selectedProducts.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Lengkapi semua data transaksi'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                decoration: const InputDecoration(labelText: "User"),
+                value: selectedUser,
+                items: users
+                    .map(
+                      (u) => DropdownMenuItem<int>(
+                        value: u['id'],
+                        child: Text(u['name']),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => selectedUser = v),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                decoration: const InputDecoration(labelText: "Payment Method"),
+                value: selectedPayment,
+                items: paymentMethods
+                    .map(
+                      (p) => DropdownMenuItem<int>(
+                        value: p['id'],
+                        child: Text(p['name']),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => selectedPayment = v),
+              ),
+              const Divider(height: 32),
+              const Text(
+                "Cari & Tambah Produk",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: searchController,
+                decoration: const InputDecoration(
+                  labelText: "Cari produk...",
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 8),
+
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      color: Colors.grey.shade200,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: const Row(
+                        children: [
+                          Expanded(flex: 1, child: Center(child: Text("No"))),
+                          Expanded(flex: 4, child: Center(child: Text("Nama"))),
+                          Expanded(
+                            flex: 3,
+                            child: Center(child: Text("Harga")),
+                          ),
+                          Expanded(flex: 2, child: Center(child: Text("Aksi"))),
+                        ],
+                      ),
                     ),
-                  );
-                  return;
-                }
+                    SizedBox(
+                      height: 250,
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount:
+                            filteredProducts.length + (isLoadingMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == filteredProducts.length) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(8),
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          }
 
-                final transactionData = {
-                  'customerId': selectedCustomer,
-                  'userId': selectedUser,
-                  'paymentMethodId': selectedPayment,
-                  'products': selectedProducts
-                      .map(
-                        (p) => {
-                          'product_id': p['product_id'],
-                          'quantity': p['quantity'],
+                          final p = filteredProducts[index];
+                          final number = index + 1;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: const BoxDecoration(
+                              border: Border(
+                                top: BorderSide(color: Colors.grey),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 1,
+                                  child: Center(child: Text("$number")),
+                                ),
+                                Expanded(flex: 4, child: Text(p['name'])),
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(
+                                    "Rp${_formatter.format(p['price'])}",
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: IconButton(
+                                    icon: const Icon(
+                                      Icons.add_circle,
+                                      color: Colors.blue,
+                                    ),
+                                    onPressed: () => addProductFromList(p),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
                         },
-                      )
-                      .toList(),
-                  'discount': discount,
-                  'paidAmount': paidAmount,
-                  'createdAt': DateTime.now().toIso8601String(),
-                };
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
-                final isOnline = await ConnectivityHelper.hasConnection();
+              const Divider(height: 32),
+              const Text(
+                "Produk Dipilih",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 250),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: selectedProducts.isEmpty
+                        ? [const Text('Belum ada produk dipilih.')]
+                        : selectedProducts.map((item) {
+                            final product = products.firstWhere(
+                              (p) => p['id'] == item['product_id'],
+                              orElse: () => {'name': 'Unknown', 'price': 0},
+                            );
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                vertical: 6,
+                                horizontal: 8,
+                              ),
+                              elevation: 2,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            product['name'],
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            "Harga: Rp${_formatter.format(product['price'])}",
+                                            style: const TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
 
-                if (isOnline) {
-                  try {
-                    final result = await _service.createTransaction(
-                      customerId: selectedCustomer!,
-                      userId: selectedUser!,
-                      paymentMethodId: selectedPayment!,
-                      products: selectedProducts,
-                      discount: discount,
-                      paidAmount: paidAmount,
-                    );
+                                          Row(
+                                            children: [
+                                              const Text("Qty: "),
+                                              SizedBox(
+                                                width: 55,
+                                                child: TextField(
+                                                  keyboardType:
+                                                      TextInputType.number,
+                                                  textAlign: TextAlign.center,
+                                                  decoration:
+                                                      const InputDecoration(
+                                                        isDense: true,
+                                                        contentPadding:
+                                                            EdgeInsets.symmetric(
+                                                              vertical: 6,
+                                                            ),
+                                                        border:
+                                                            OutlineInputBorder(),
+                                                      ),
+                                                  controller:
+                                                      TextEditingController(
+                                                        text: item['quantity']
+                                                            .toString(),
+                                                      ),
+                                                  onChanged: (v) {
+                                                    final qty =
+                                                        int.tryParse(v) ?? 1;
+                                                    setState(() {
+                                                      item['quantity'] = qty > 0
+                                                          ? qty
+                                                          : 1;
+                                                    });
+                                                  },
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Text(
+                                                  "Subtotal: Rp${_formatter.format(calculateSubtotal(item))}",
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.black87,
+                                                  ),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
 
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline),
+                                      color: Colors.red.shade400,
+                                      tooltip: "Hapus produk",
+                                      onPressed: () => removeProduct(
+                                        selectedProducts.indexOf(item),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                  ),
+                ),
+              ),
+
+              const Divider(height: 32),
+              TextFormField(
+                controller: discountController,
+                decoration: const InputDecoration(labelText: "Diskon (Rp)"),
+                keyboardType: TextInputType.number,
+                onChanged: (v) =>
+                    setState(() => discount = double.tryParse(v) ?? 0),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "Total: Rp${_formatter.format(calculateGrandTotal())}",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: paidAmountController,
+                decoration: const InputDecoration(
+                  labelText: "Uang Dibayar (Rp)",
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (v) =>
+                    setState(() => paidAmount = double.tryParse(v) ?? 0),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "Kembalian: Rp${_formatter.format(calculateChange())}",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green,
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () async {
+                  if (selectedCustomer == null ||
+                      selectedUser == null ||
+                      selectedPayment == null ||
+                      selectedProducts.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          result['message'] ?? 'Transaksi berhasil',
-                        ),
+                      const SnackBar(
+                        content: Text('Lengkapi semua data transaksi'),
                       ),
                     );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Gagal online, simpan lokal: $e')),
-                    );
+                    return;
+                  }
+
+                  final transactionData = {
+                    'customerId': selectedCustomer,
+                    'userId': selectedUser,
+                    'paymentMethodId': selectedPayment,
+                    'products': selectedProducts
+                        .map(
+                          (p) => {
+                            'product_id': p['product_id'],
+                            'quantity': p['quantity'],
+                          },
+                        )
+                        .toList(),
+                    'discount': discount,
+                    'paidAmount': paidAmount,
+                    'createdAt': DateTime.now().toIso8601String(),
+                  };
+
+                  final isOnline = await ConnectivityHelper.hasConnection();
+
+                  if (isOnline) {
+                    try {
+                      final result = await _service.createTransaction(
+                        customerId: selectedCustomer!,
+                        userId: selectedUser!,
+                        paymentMethodId: selectedPayment!,
+                        products: selectedProducts,
+                        discount: discount,
+                        paidAmount: paidAmount,
+                      );
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            result['message'] ?? 'Transaksi berhasil',
+                          ),
+                        ),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Gagal online, simpan lokal: $e'),
+                        ),
+                      );
+                      await LocalDBService().saveOfflineTransaction(
+                        transactionData,
+                      );
+                    }
+                  } else {
                     await LocalDBService().saveOfflineTransaction(
                       transactionData,
                     );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Offline — transaksi disimpan sementara'),
+                      ),
+                    );
                   }
-                } else {
-                  await LocalDBService().saveOfflineTransaction(
-                    transactionData,
-                  );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Offline — transaksi disimpan sementara'),
-                    ),
-                  );
-                }
 
-                setState(() {
-                  selectedProducts.clear();
-                  discount = 0;
-                  paidAmount = 0;
-                  discountController.clear();
-                  paidAmountController.clear();
-                });
+                  setState(() {
+                    selectedProducts.clear();
+                    discount = 0;
+                    paidAmount = 0;
+                    discountController.clear();
+                    paidAmountController.clear();
+                  });
 
-                widget.onTransactionSuccess();
-              },
+                  widget.onTransactionSuccess();
+                },
 
-              // onPressed: () async {
-              //   if (selectedCustomer == null ||
-              //       selectedUser == null ||
-              //       selectedPayment == null ||
-              //       selectedProducts.isEmpty) {
-              //     ScaffoldMessenger.of(context).showSnackBar(
-              //       const SnackBar(
-              //         content: Text('Lengkapi semua data transaksi'),
-              //       ),
-              //     );
-              //     return;
-              //   }
-
-              //   try {
-              //     final result = await _service.createTransaction(
-              //       customerId: selectedCustomer!,
-              //       userId: selectedUser!,
-              //       paymentMethodId: selectedPayment!,
-              //       products: selectedProducts
-              //           .map(
-              //             (item) => {
-              //               'product_id': item['product_id'],
-              //               'quantity': item['quantity'],
-              //             },
-              //           )
-              //           .toList(),
-              //       discount: discount,
-              //       paidAmount: paidAmount,
-              //     );
-
-              //     ScaffoldMessenger.of(context).showSnackBar(
-              //       SnackBar(
-              //         content: Text(
-              //           result['message'] ?? 'Transaksi berhasil disimpan',
-              //         ),
-              //       ),
-              //     );
-
-              //     setState(() {
-              //       selectedProducts.clear();
-              //       discount = 0;
-              //       paidAmount = 0;
-              //       discountController.clear();
-              //       paidAmountController.clear();
-              //     });
-
-              //     widget.onTransactionSuccess();
-              //   } catch (e) {
-              //     ScaffoldMessenger.of(context).showSnackBar(
-              //       SnackBar(content: Text('Gagal menyimpan transaksi: $e')),
-              //     );
-              //   }
-              // },
-              child: const Text("Simpan Transaksi"),
-            ),
-          ],
+                child: const Text("Simpan Transaksi"),
+              ),
+            ],
+          ),
         ),
       ),
     );
