@@ -13,6 +13,8 @@ class LocalDBService {
   }
 
   Future<Database> _initDB() async {
+    // await deleteDatabase(join(await getDatabasesPath(), 'offline_pos.db'));
+
     final path = join(await getDatabasesPath(), 'offline_pos.db');
     return await openDatabase(path, version: 1, onCreate: _onCreate);
   }
@@ -148,8 +150,60 @@ class LocalDBService {
 
   Future<void> saveOfflineTransaction(Map<String, dynamic> data) async {
     final db = await database;
+
+    // Hitung total_qty & total_price
+    double totalPrice = 0;
+    int totalQty = 0;
+
+    List<Map<String, dynamic>> details = [];
+
+    for (var item in data['products']) {
+      final product = await db.query(
+        'products',
+        where: 'id = ?',
+        whereArgs: [item['product_id']],
+        limit: 1,
+      );
+
+      if (product.isNotEmpty) {
+        final p = product.first;
+        final price = p['price'] ?? 0;
+        final quantity = item['quantity'] ?? 0;
+        final subtotal = 1;
+
+        details.add({
+          'product_id': item['product_id'],
+          'quantity': quantity,
+          'price': price,
+          'subtotal': subtotal,
+        });
+
+        totalPrice += subtotal;
+        totalQty += 1;
+      }
+    }
+
+    final transactionOffline = {
+      'invoice_number':
+          'INV/${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}/${DateTime.now().millisecondsSinceEpoch}',
+      'customer_id': data['customerId'],
+      'user_id': data['userId'],
+      'payment_method_id': data['paymentMethodId'],
+      'total_qty': totalQty,
+      'total_price': totalPrice,
+      'discount': data['discount'] ?? 0,
+      'grand_total': totalPrice - (data['discount'] ?? 0),
+      'paid_amount': data['paidAmount'] ?? totalPrice,
+      'change_amount':
+          (data['paidAmount'] ?? totalPrice) -
+          (totalPrice - (data['discount'] ?? 0)),
+      'status': 'pending',
+      'created_at': DateTime.now().toIso8601String(),
+      'details': details,
+    };
+
     await db.insert('transactions_pending', {
-      'data': jsonEncode(data),
+      'data': jsonEncode(transactionOffline),
       'synced': 0,
     });
   }

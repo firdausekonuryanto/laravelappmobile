@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:laravelappmobile/screens/DetailTransactionScreen.dart';
 import '../services/transaction_service.dart';
+import '../services/local_db_service.dart';
+import 'package:laravelappmobile/utils/connectivity_helper.dart';
 
 class IndexTransactionScreen extends StatefulWidget {
   const IndexTransactionScreen({super.key});
@@ -12,22 +15,24 @@ class IndexTransactionScreen extends StatefulWidget {
 
 class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   final TransactionService _service = TransactionService();
+  final LocalDBService _localDB = LocalDBService();
   final _formatter = NumberFormat("#,###", "id_ID");
 
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
-  // 🔹 Data
+  // Data
   List<Map<String, dynamic>> _transactions = [];
   bool isLoading = false;
   bool isLoadingMore = false;
   bool hasMore = true;
+  bool isOffline = false;
 
-  // 🔹 Pagination
+  // Pagination
   int _currentPage = 1;
   int _lastPage = 1;
 
-  // 🔹 Filter
+  // Filter
   String _searchTerm = '';
   DateTime? _startDate;
   DateTime? _endDate;
@@ -36,10 +41,9 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   @override
   void initState() {
     super.initState();
-    loadTransactions(); // Muat data pertama kali
+    loadTransactions();
     _searchController.addListener(_onSearchChanged);
 
-    // 🔹 Tambah listener scroll untuk pagination
     _scrollController.addListener(() {
       if (_scrollController.position.pixels >=
               _scrollController.position.maxScrollExtent - 200 &&
@@ -57,7 +61,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     super.dispose();
   }
 
-  // 🔹 Ketika teks pencarian berubah
+  // Ketika teks pencarian berubah
   void _onSearchChanged() {
     final term = _searchController.text.trim();
     if (term != _searchTerm) {
@@ -66,43 +70,100 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     }
   }
 
-  // 🔹 Ambil data pertama (page 1)
   Future<void> loadTransactions({
     String? search,
     DateTime? startDate,
     DateTime? endDate,
   }) async {
     setState(() => isLoading = true);
+
+    final isOnline = await ConnectivityHelper.hasConnection();
+    print('🔌 Status koneksi: ${isOnline ? "ONLINE" : "OFFLINE"}');
+
     try {
-      final result = await _service.fetchTransactions(
-        page: 1,
-        searchTerm: search,
-        startDate: startDate,
-        endDate: endDate,
-      );
+      if (isOnline) {
+        // 🟢 Mode Online
+        isOffline = false;
+
+        final result = await _service.fetchTransactions(
+          page: 1,
+          searchTerm: search,
+          startDate: startDate,
+          endDate: endDate,
+        );
+
+        setState(() {
+          _transactions = result['transactions'];
+          _currentPage = result['current_page'];
+          _lastPage = result['last_page'];
+          hasMore = _currentPage < _lastPage;
+          isLoading = false;
+          _isFiltering =
+              (search?.isNotEmpty == true ||
+              startDate != null ||
+              endDate != null);
+        });
+      } else {
+        // 🔴 Mode Offline
+        isOffline = true;
+        print("📴 Offline mode — memuat transaksi dari SQLite...");
+
+        final pending = await _localDB.getPendingTransactions();
+
+        final localTransactions = pending.map((row) {
+          final data = jsonDecode(row['data']);
+          return {
+            'invoice_number': 'OFF-${row['id']}',
+            'customer': {'name': data['customerId'].toString()},
+            'user': {'name': data['userId'].toString()},
+            'status': 'pending',
+            'grand_total': data['paidAmount'] ?? 0,
+            'created_at': data['createdAt'] ?? DateTime.now().toIso8601String(),
+          };
+        }).toList();
+
+        setState(() {
+          _transactions = localTransactions;
+          isLoading = false;
+          hasMore = false;
+        });
+      }
+    } catch (e) {
+      // Kalau error (misalnya server mati), fallback ke offline juga
+      print("⚠️ Gagal memuat data online: $e");
+      final pending = await _localDB.getPendingTransactions();
+
+      final localTransactions = pending.map((row) {
+        final data = jsonDecode(row['data']);
+        return {
+          'invoice_number': 'OFF-${row['id']}',
+          'customer': {'name': data['customerId'].toString()},
+          'user': {'name': data['userId'].toString()},
+          'status': 'pending',
+          'grand_total': data['paidAmount'] ?? 0,
+          'created_at': data['createdAt'] ?? DateTime.now().toIso8601String(),
+        };
+      }).toList();
 
       setState(() {
-        _transactions = result['transactions'];
-        _currentPage = result['current_page'];
-        _lastPage = result['last_page'];
-        hasMore = _currentPage < _lastPage;
+        _transactions = localTransactions;
         isLoading = false;
-        _isFiltering =
-            (search?.isNotEmpty == true ||
-            startDate != null ||
-            endDate != null);
+        hasMore = false;
       });
-    } catch (e) {
-      setState(() => isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Gagal memuat transaksi: $e')));
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Gagal memuat transaksi online: $e\nTampilkan data lokal.',
+          ),
+        ),
+      );
     }
   }
 
-  // 🔹 Load halaman berikutnya
+  // Load halaman berikutnya (hanya jika online)
   Future<void> _loadMoreTransactions() async {
-    if (_currentPage >= _lastPage) return;
+    if (isOffline || _currentPage >= _lastPage) return;
     setState(() => isLoadingMore = true);
 
     try {
@@ -125,7 +186,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     }
   }
 
-  // 🔹 Refresh manual (pull-to-refresh)
+  // Refresh manual
   Future<void> _refreshTransactions() async {
     await loadTransactions(
       search: _searchTerm,
@@ -136,7 +197,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
 
   Future<void> refreshData() => _refreshTransactions();
 
-  // 🔹 Pilih tanggal
+  // Pilih tanggal
   Future<void> _selectDate(
     BuildContext context, {
     required bool isStart,
@@ -162,7 +223,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     }
   }
 
-  // 🔹 Reset semua filter
+  // Reset filter
   void _resetFilters() {
     setState(() {
       _searchController.clear();
@@ -174,7 +235,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     _refreshTransactions();
   }
 
-  // 🔹 Badge status
+  // Badge status
   Widget _buildStatusBadge(String status) {
     Color color;
     switch (status.toLowerCase()) {
@@ -211,10 +272,15 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Daftar Transaksi")),
+      appBar: AppBar(
+        title: Text(
+          isOffline ? "Daftar Transaksi (Offline)" : "Daftar Transaksi",
+        ),
+        backgroundColor: isOffline ? Colors.orange : Colors.blue,
+      ),
       body: Column(
         children: [
-          // 🔹 Filter Bar
+          // Filter Bar
           Padding(
             padding: const EdgeInsets.all(8),
             child: Column(
@@ -275,7 +341,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
             ),
           ),
 
-          // 🔹 Data List
+          // Data List
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refreshTransactions,
@@ -298,7 +364,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
                         }
 
                         final t = _transactions[index];
-                        final no = index + 1; // ✅ Nomor urut mulai dari 1
+                        final no = index + 1;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -311,7 +377,6 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
                               vertical: 8,
                               horizontal: 16,
                             ),
-                            // ✅ Tambahkan nomor urut di depan invoice
                             title: Row(
                               children: [
                                 CircleAvatar(
@@ -375,14 +440,25 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
                               color: Colors.grey,
                             ),
                             onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => DetailTransactionScreen(
-                                    transactionData: t,
+                              if (isOffline) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      "Transaksi offline belum bisa dibuka detailnya.",
+                                    ),
                                   ),
-                                ),
-                              ).then((_) => _refreshTransactions());
+                                );
+                              } else {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        DetailTransactionScreen(
+                                          transactionData: t,
+                                        ),
+                                  ),
+                                ).then((_) => _refreshTransactions());
+                              }
                             },
                           ),
                         );

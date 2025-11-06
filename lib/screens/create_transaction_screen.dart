@@ -605,10 +605,12 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     'createdAt': DateTime.now().toIso8601String(),
                   };
 
+                  final localDB = LocalDBService();
                   final isOnline = await ConnectivityHelper.hasConnection();
 
-                  if (isOnline) {
-                    try {
+                  try {
+                    if (isOnline) {
+                      // 🔹 Mode Online
                       final result = await _service.createTransaction(
                         customerId: selectedCustomer!,
                         userId: selectedUser!,
@@ -625,27 +627,40 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                           ),
                         ),
                       );
-                    } catch (e) {
+                    } else {
+                      // 🔹 Mode Offline
+                      await localDB.saveOfflineTransaction(transactionData);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Gagal online, simpan lokal: $e'),
+                        const SnackBar(
+                          content: Text(
+                            '📴 Offline — transaksi disimpan sementara',
+                          ),
                         ),
                       );
-                      await LocalDBService().saveOfflineTransaction(
-                        transactionData,
+                    }
+                  } catch (e, st) {
+                    // 🔹 Gagal kirim ke server → simpan offline
+                    print("❌ Gagal online: $e");
+                    print(st);
+
+                    try {
+                      await localDB.saveOfflineTransaction(transactionData);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            '⚠️ Koneksi gagal — transaksi disimpan offline',
+                          ),
+                        ),
+                      );
+                    } catch (err) {
+                      print("❌ Gagal menyimpan offline: $err");
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Gagal simpan offline: $err')),
                       );
                     }
-                  } else {
-                    await LocalDBService().saveOfflineTransaction(
-                      transactionData,
-                    );
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Offline — transaksi disimpan sementara'),
-                      ),
-                    );
                   }
 
+                  // 🔹 Reset form setelah simpan
                   setState(() {
                     selectedProducts.clear();
                     discount = 0;
@@ -654,9 +669,11 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     paidAmountController.clear();
                   });
 
+                  // 🔹 Debug info (cek isi tabel lokal)
+                  await localDB.printTableCount();
+
                   widget.onTransactionSuccess();
                 },
-
                 child: const Text("Simpan Transaksi"),
               ),
             ],
