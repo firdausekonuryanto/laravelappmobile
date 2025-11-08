@@ -143,12 +143,14 @@ class _IndexTransactionScreenState extends State<IndexTransactionScreen> {
 
     final localTransactions = pending.map((row) {
       final data = jsonDecode(row['data']);
+      print("data _loadOfflineTransactions");
+      print(data);
       return {
         'invoice_number': 'OFF-${row['id']}',
-        'customer': {'name': data['customerId'].toString()},
-        'user': {'name': data['userId'].toString()},
+        'customer': {'name': data['customer_id'].toString()},
+        'user': {'name': data['user_id'].toString()},
         'status': 'pending',
-        'grand_total': data['paidAmount'] ?? 0,
+        'grand_total': data['grand_total'] ?? 0,
         'created_at': data['createdAt'] ?? DateTime.now().toIso8601String(),
       };
     }).toList();
