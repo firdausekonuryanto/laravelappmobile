@@ -610,7 +610,8 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
 
                   try {
                     if (isOnline) {
-                      // 🔹 Mode Online
+                      print("saved online : ");
+                      print(transactionData);
                       final result = await _service.createTransaction(
                         customerId: selectedCustomer!,
                         userId: selectedUser!,
@@ -628,7 +629,9 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                         ),
                       );
                     } else {
-                      // 🔹 Mode Offline
+                      print("saved offline bro: ");
+                      print(transactionData);
+
                       await localDB.saveOfflineTransaction(transactionData);
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -639,11 +642,12 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                       );
                     }
                   } catch (e, st) {
-                    // 🔹 Gagal kirim ke server → simpan offline
                     print("❌ Gagal online: $e");
                     print(st);
 
                     try {
+                      print("saved offline : ");
+                      print(transactionData);
                       await localDB.saveOfflineTransaction(transactionData);
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -660,7 +664,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     }
                   }
 
-                  // 🔹 Reset form setelah simpan
                   setState(() {
                     selectedProducts.clear();
                     discount = 0;
@@ -669,7 +672,6 @@ class _CreateTransactionScreenState extends State<CreateTransactionScreen> {
                     paidAmountController.clear();
                   });
 
-                  // 🔹 Debug info (cek isi tabel lokal)
                   await localDB.printTableCount();
 
                   widget.onTransactionSuccess();

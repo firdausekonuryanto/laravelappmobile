@@ -10,10 +10,10 @@ class IndexTransactionScreen extends StatefulWidget {
   const IndexTransactionScreen({super.key});
 
   @override
-  State<IndexTransactionScreen> createState() => IndexTransactionScreenState();
+  State<IndexTransactionScreen> createState() => _IndexTransactionScreenState();
 }
 
-class IndexTransactionScreenState extends State<IndexTransactionScreen> {
+class _IndexTransactionScreenState extends State<IndexTransactionScreen> {
   final TransactionService _service = TransactionService();
   final LocalDBService _localDB = LocalDBService();
   final _formatter = NumberFormat("#,###", "id_ID");
@@ -21,18 +21,15 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
-  // Data
   List<Map<String, dynamic>> _transactions = [];
   bool isLoading = false;
   bool isLoadingMore = false;
   bool hasMore = true;
   bool isOffline = false;
 
-  // Pagination
   int _currentPage = 1;
   int _lastPage = 1;
 
-  // Filter
   String _searchTerm = '';
   DateTime? _startDate;
   DateTime? _endDate;
@@ -41,15 +38,28 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
   @override
   void initState() {
     super.initState();
-    loadTransactions();
+    _initData();
+  }
+
+  Future<void> _initData() async {
+    await loadTransactions();
     _searchController.addListener(_onSearchChanged);
 
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-              _scrollController.position.maxScrollExtent - 200 &&
-          !isLoadingMore &&
-          hasMore) {
-        _loadMoreTransactions();
+      final nearBottom =
+          _scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 200;
+      if (nearBottom && !isLoadingMore && hasMore) _loadMoreTransactions();
+    });
+
+    ConnectivityHelper.onConnectionRestored.listen((_) async {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Koneksi pulih — menyinkronkan data..."),
+          ),
+        );
+        await syncPendingTransactions();
       }
     });
   }
@@ -61,7 +71,6 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     super.dispose();
   }
 
-  // Ketika teks pencarian berubah
   void _onSearchChanged() {
     final term = _searchController.text.trim();
     if (term != _searchTerm) {
@@ -70,98 +79,89 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     }
   }
 
+  Future<void> refreshData() async {
+    // misalnya reload data transaksi
+    await loadTransactions();
+    setState(() {});
+  }
+
   Future<void> loadTransactions({
     String? search,
     DateTime? startDate,
     DateTime? endDate,
   }) async {
     setState(() => isLoading = true);
-
     final isOnline = await ConnectivityHelper.hasConnection();
-    print('🔌 Status koneksi: ${isOnline ? "ONLINE" : "OFFLINE"}');
 
     try {
       if (isOnline) {
-        // 🟢 Mode Online
-        isOffline = false;
-
-        final result = await _service.fetchTransactions(
-          page: 1,
-          searchTerm: search,
-          startDate: startDate,
-          endDate: endDate,
-        );
-
-        setState(() {
-          _transactions = result['transactions'];
-          _currentPage = result['current_page'];
-          _lastPage = result['last_page'];
-          hasMore = _currentPage < _lastPage;
-          isLoading = false;
-          _isFiltering =
-              (search?.isNotEmpty == true ||
-              startDate != null ||
-              endDate != null);
-        });
+        await _loadOnlineTransactions(search, startDate, endDate);
       } else {
-        // 🔴 Mode Offline
-        isOffline = true;
-        print("📴 Offline mode — memuat transaksi dari SQLite...");
-
-        final pending = await _localDB.getPendingTransactions();
-
-        final localTransactions = pending.map((row) {
-          final data = jsonDecode(row['data']);
-          return {
-            'invoice_number': 'OFF-${row['id']}',
-            'customer': {'name': data['customerId'].toString()},
-            'user': {'name': data['userId'].toString()},
-            'status': 'pending',
-            'grand_total': data['paidAmount'] ?? 0,
-            'created_at': data['createdAt'] ?? DateTime.now().toIso8601String(),
-          };
-        }).toList();
-
-        setState(() {
-          _transactions = localTransactions;
-          isLoading = false;
-          hasMore = false;
-        });
+        await _loadOfflineTransactions();
       }
     } catch (e) {
-      // Kalau error (misalnya server mati), fallback ke offline juga
-      print("⚠️ Gagal memuat data online: $e");
-      final pending = await _localDB.getPendingTransactions();
-
-      final localTransactions = pending.map((row) {
-        final data = jsonDecode(row['data']);
-        return {
-          'invoice_number': 'OFF-${row['id']}',
-          'customer': {'name': data['customerId'].toString()},
-          'user': {'name': data['userId'].toString()},
-          'status': 'pending',
-          'grand_total': data['paidAmount'] ?? 0,
-          'created_at': data['createdAt'] ?? DateTime.now().toIso8601String(),
-        };
-      }).toList();
-
-      setState(() {
-        _transactions = localTransactions;
-        isLoading = false;
-        hasMore = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Gagal memuat transaksi online: $e\nTampilkan data lokal.',
+      await _loadOfflineTransactions();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Gagal memuat transaksi online: $e\nTampilkan data lokal.',
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 
-  // Load halaman berikutnya (hanya jika online)
+  Future<void> _loadOnlineTransactions(
+    String? search,
+    DateTime? startDate,
+    DateTime? endDate,
+  ) async {
+    final result = await _service.fetchTransactions(
+      page: 1,
+      searchTerm: search,
+      startDate: startDate,
+      endDate: endDate,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      isOffline = false;
+      _transactions = result['transactions'];
+      _currentPage = result['current_page'];
+      _lastPage = result['last_page'];
+      hasMore = _currentPage < _lastPage;
+      isLoading = false;
+      _isFiltering =
+          (search?.isNotEmpty == true || startDate != null || endDate != null);
+    });
+  }
+
+  Future<void> _loadOfflineTransactions() async {
+    final pending = await _localDB.getPendingTransactions();
+
+    final localTransactions = pending.map((row) {
+      final data = jsonDecode(row['data']);
+      return {
+        'invoice_number': 'OFF-${row['id']}',
+        'customer': {'name': data['customerId'].toString()},
+        'user': {'name': data['userId'].toString()},
+        'status': 'pending',
+        'grand_total': data['paidAmount'] ?? 0,
+        'created_at': data['createdAt'] ?? DateTime.now().toIso8601String(),
+      };
+    }).toList();
+
+    if (!mounted) return;
+    setState(() {
+      isOffline = true;
+      _transactions = localTransactions;
+      isLoading = false;
+      hasMore = false;
+    });
+  }
+
   Future<void> _loadMoreTransactions() async {
     if (isOffline || _currentPage >= _lastPage) return;
     setState(() => isLoadingMore = true);
@@ -175,6 +175,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
         endDate: _endDate,
       );
 
+      if (!mounted) return;
       setState(() {
         _transactions.addAll(result['transactions']);
         _currentPage = result['current_page'];
@@ -186,7 +187,6 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     }
   }
 
-  // Refresh manual
   Future<void> _refreshTransactions() async {
     await loadTransactions(
       search: _searchTerm,
@@ -195,14 +195,51 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     );
   }
 
-  Future<void> refreshData() => _refreshTransactions();
+  Future<void> syncPendingTransactions() async {
+    final isOnline = await ConnectivityHelper.hasConnection();
+    if (!isOnline) return;
 
-  // Pilih tanggal
+    final pending = await _localDB.getPendingTransactions();
+    if (pending.isEmpty) return;
+
+    for (final row in pending) {
+      try {
+        final data = jsonDecode(row['data']);
+        final customerId = data['customer_id'] ?? 0;
+        final userId = data['user_id'] ?? 0;
+        final paymentMethodId = data['payment_method_id'] ?? 0;
+        final discount = (data['discount'] ?? 0).toDouble();
+        final paidAmount = (data['paid_amount'] ?? 0).toDouble();
+        final products = List<Map<String, dynamic>>.from(data['details'] ?? []);
+
+        await _service.createTransaction(
+          customerId: customerId,
+          userId: userId,
+          paymentMethodId: paymentMethodId,
+          products: products,
+          discount: discount,
+          paidAmount: paidAmount,
+        );
+
+        await _localDB.deletePendingTransaction(row['id']);
+      } catch (_) {}
+    }
+
+    await _refreshTransactions();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Sinkronisasi offline → online selesai ✅"),
+        ),
+      );
+    }
+  }
+
   Future<void> _selectDate(
     BuildContext context, {
     required bool isStart,
   }) async {
-    final DateTime? picked = await showDatePicker(
+    final picked = await showDatePicker(
       context: context,
       initialDate: isStart
           ? (_startDate ?? DateTime.now())
@@ -212,18 +249,11 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     );
 
     if (picked != null) {
-      setState(() {
-        if (isStart) {
-          _startDate = picked;
-        } else {
-          _endDate = picked;
-        }
-      });
+      setState(() => isStart ? _startDate = picked : _endDate = picked);
       _refreshTransactions();
     }
   }
 
-  // Reset filter
   void _resetFilters() {
     setState(() {
       _searchController.clear();
@@ -235,22 +265,14 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
     _refreshTransactions();
   }
 
-  // Badge status
   Widget _buildStatusBadge(String status) {
-    Color color;
-    switch (status.toLowerCase()) {
-      case 'paid':
-        color = Colors.green;
-        break;
-      case 'pending':
-        color = Colors.orange;
-        break;
-      case 'canceled':
-        color = Colors.red;
-        break;
-      default:
-        color = Colors.grey;
-    }
+    final color =
+        {
+          'paid': Colors.green,
+          'pending': Colors.orange,
+          'canceled': Colors.red,
+        }[status.toLowerCase()] ??
+        Colors.grey;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -280,68 +302,7 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
       ),
       body: Column(
         children: [
-          // Filter Bar
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    labelText: 'Cari Invoice / Nama Customer',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _searchTerm.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: _resetFilters,
-                          )
-                        : null,
-                    border: const OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(10)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.calendar_today, size: 18),
-                        label: Text(
-                          _startDate == null
-                              ? 'Start Date'
-                              : DateFormat('dd/MM/yy').format(_startDate!),
-                        ),
-                        onPressed: () => _selectDate(context, isStart: true),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.calendar_today, size: 18),
-                        label: Text(
-                          _endDate == null
-                              ? 'End Date'
-                              : DateFormat('dd/MM/yy').format(_endDate!),
-                        ),
-                        onPressed: () => _selectDate(context, isStart: false),
-                      ),
-                    ),
-                    if (_isFiltering) ...[
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.red),
-                        tooltip: 'Reset Filter',
-                        onPressed: _resetFilters,
-                      ),
-                    ],
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Data List
+          _buildFilterBar(context),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _refreshTransactions,
@@ -349,125 +310,181 @@ class IndexTransactionScreenState extends State<IndexTransactionScreen> {
                   ? const Center(child: CircularProgressIndicator())
                   : _transactions.isEmpty
                   ? const Center(child: Text("Belum ada transaksi"))
-                  : ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _transactions.length + (isLoadingMore ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == _transactions.length) {
-                          return const Center(
-                            child: Padding(
-                              padding: EdgeInsets.all(16),
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        }
-
-                        final t = _transactions[index];
-                        final no = index + 1;
-
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              vertical: 8,
-                              horizontal: 16,
-                            ),
-                            title: Row(
-                              children: [
-                                CircleAvatar(
-                                  radius: 12,
-                                  backgroundColor: Colors.blue.shade700,
-                                  child: Text(
-                                    '$no',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    t['invoice_number'] ?? 'N/A',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 4),
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      "Customer: ${t['customer']?['name'] ?? '-'}",
-                                    ),
-                                    _buildStatusBadge(t['status'] ?? 'N/A'),
-                                  ],
-                                ),
-                                Text("Cashier: ${t['user']?['name'] ?? '-'}"),
-                                Text(
-                                  "Total: Rp${_formatter.format(t['grand_total'] ?? 0)}",
-                                  style: TextStyle(
-                                    color: Colors.green.shade700,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Text(
-                                  "Tgl: ${DateFormat('dd MMM yyyy').format(DateTime.parse(t['created_at']))}",
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            trailing: const Icon(
-                              Icons.arrow_forward_ios,
-                              size: 16,
-                              color: Colors.grey,
-                            ),
-                            onTap: () {
-                              if (isOffline) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      "Transaksi offline belum bisa dibuka detailnya.",
-                                    ),
-                                  ),
-                                );
-                              } else {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        DetailTransactionScreen(
-                                          transactionData: t,
-                                        ),
-                                  ),
-                                ).then((_) => _refreshTransactions());
-                              }
-                            },
-                          ),
-                        );
-                      },
-                    ),
+                  : _buildTransactionList(),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFilterBar(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        children: [
+          TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              labelText: 'Cari Invoice / Nama Customer',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchTerm.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: _resetFilters,
+                    )
+                  : null,
+              border: const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(10)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today, size: 18),
+                  label: Text(
+                    _startDate == null
+                        ? 'Start Date'
+                        : DateFormat('dd/MM/yy').format(_startDate!),
+                  ),
+                  onPressed: () => _selectDate(context, isStart: true),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today, size: 18),
+                  label: Text(
+                    _endDate == null
+                        ? 'End Date'
+                        : DateFormat('dd/MM/yy').format(_endDate!),
+                  ),
+                  onPressed: () => _selectDate(context, isStart: false),
+                ),
+              ),
+              if (_isFiltering)
+                IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.red),
+                  tooltip: 'Reset Filter',
+                  onPressed: _resetFilters,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionList() {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: _transactions.length + (isLoadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == _transactions.length) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        final t = _transactions[index];
+        final no = index + 1;
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              vertical: 8,
+              horizontal: 16,
+            ),
+            title: Row(
+              children: [
+                CircleAvatar(
+                  radius: 12,
+                  backgroundColor: Colors.blue.shade700,
+                  child: Text(
+                    '$no',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    t['invoice_number'] ?? 'N/A',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("Customer: ${t['customer']?['name'] ?? '-'}"),
+                    _buildStatusBadge(t['status'] ?? 'N/A'),
+                  ],
+                ),
+                Text("Cashier: ${t['user']?['name'] ?? '-'}"),
+                Text(
+                  "Total: Rp${_formatter.format(t['grand_total'] ?? 0)}",
+                  style: TextStyle(
+                    color: Colors.green.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  "Tgl: ${DateFormat('dd MMM yyyy').format(DateTime.parse(t['created_at']))}",
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            trailing: const Icon(
+              Icons.arrow_forward_ios,
+              size: 16,
+              color: Colors.grey,
+            ),
+            onTap: () {
+              if (isOffline) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      "Transaksi offline belum bisa dibuka detailnya.",
+                    ),
+                  ),
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        DetailTransactionScreen(transactionData: t),
+                  ),
+                ).then((_) => _refreshTransactions());
+              }
+            },
+          ),
+        );
+      },
     );
   }
 }

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:laravelappmobile/screens/index_transaction_screen.dart';
 import 'create_transaction_screen.dart';
-// import 'rekap_screen.dart';
-// import 'setting_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -14,26 +12,25 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  // ✅ Gunakan GlobalKey untuk mengakses IndexTransactionScreenState dari luar
-  final GlobalKey<IndexTransactionScreenState> _indexScreenKey = GlobalKey();
+  final GlobalKey _indexScreenKey = GlobalKey();
 
-  // Fungsi untuk menangani klik pada item bottom navigation
   void _onItemTapped(int index) {
-    final isIndexTab = index == 0;
+    final bool isIndexTab = index == 0;
 
     if (index != _selectedIndex) {
-      setState(() {
-        _selectedIndex = index;
-      });
+      setState(() => _selectedIndex = index);
     }
 
-    // ✅ Jika kembali ke tab Index, refresh otomatis
+    // ✅ Panggil refreshData() jika kembali ke tab Index
     if (isIndexTab && _indexScreenKey.currentState != null) {
-      _indexScreenKey.currentState!.refreshData();
+      try {
+        (_indexScreenKey.currentState as dynamic).refreshData();
+      } catch (e) {
+        // optional: ignore kalau method tidak ada
+      }
     }
   }
 
-  // ✅ Gunakan late final agar hanya diinisialisasi sekali
   late final List<Widget> _screens = [
     IndexTransactionScreen(key: _indexScreenKey),
     CreateTransactionScreen(onTransactionSuccess: () => _onItemTapped(0)),
@@ -51,7 +48,6 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // ✅ IndexedStack memastikan state antar-tab tetap dipertahankan
       body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: BottomNavigationBar(
         items: _bottomItems,

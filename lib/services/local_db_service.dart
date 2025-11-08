@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'package:flutter/rendering.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -13,8 +12,6 @@ class LocalDBService {
   }
 
   Future<Database> _initDB() async {
-    // await deleteDatabase(join(await getDatabasesPath(), 'offline_pos.db'));
-
     final path = join(await getDatabasesPath(), 'offline_pos.db');
     return await openDatabase(path, version: 1, onCreate: _onCreate);
   }
@@ -93,7 +90,6 @@ class LocalDBService {
 
   Future<void> saveSyncData(Map<String, dynamic> data) async {
     final db = await database;
-
     await clearTables();
 
     final tables = {
@@ -103,7 +99,6 @@ class LocalDBService {
       ),
       'suppliers': List<Map<String, dynamic>>.from(data['suppliers'] ?? []),
       'customers': List<Map<String, dynamic>>.from(data['customers'] ?? []),
-
       'payment_methods': List<Map<String, dynamic>>.from(
         data['paymentMethods'] ?? [],
       ),
@@ -111,7 +106,6 @@ class LocalDBService {
 
     for (final entry in tables.entries) {
       final batch = db.batch();
-
       for (final row in entry.value) {
         batch.insert(
           entry.key,
@@ -119,11 +113,7 @@ class LocalDBService {
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
-
       await batch.commit(noResult: true);
-      debugPrint(
-        '✅ Tersimpan ${entry.value.length} data ke tabel ${entry.key}',
-      );
     }
   }
 
@@ -150,14 +140,19 @@ class LocalDBService {
 
   Future<void> saveOfflineTransaction(Map<String, dynamic> data) async {
     final db = await database;
+    print("🟢 [DEBUG] Mulai simpan transaksi offline...");
+    print("🧾 Data input: ${jsonEncode(data)}");
 
-    // Hitung total_qty & total_price
     double totalPrice = 0;
     int totalQty = 0;
-
     List<Map<String, dynamic>> details = [];
 
+    // Debug jumlah produk
+    print("📦 Jumlah produk: ${data['products']?.length ?? 0}");
+
     for (var item in data['products']) {
+      print("➡️ Proses produk ID: ${item['product_id']}");
+
       final product = await db.query(
         'products',
         where: 'id = ?',
@@ -165,23 +160,39 @@ class LocalDBService {
         limit: 1,
       );
 
-      if (product.isNotEmpty) {
-        final p = product.first;
-        final price = p['price'] ?? 0;
-        final quantity = item['quantity'] ?? 0;
-        final subtotal = 1;
-
-        details.add({
-          'product_id': item['product_id'],
-          'quantity': quantity,
-          'price': price,
-          'subtotal': subtotal,
-        });
-
-        totalPrice += subtotal;
-        totalQty += 1;
+      if (product.isEmpty) {
+        print(
+          "⚠️ Produk dengan ID ${item['product_id']} tidak ditemukan di tabel 'products'.",
+        );
+        continue;
       }
+
+      final p = product.first;
+      print("✅ Produk ditemukan: ${p['name']} (Harga: ${p['price']})");
+
+      final double price = (p['price'] is int)
+          ? (p['price'] as int).toDouble()
+          : (p['price'] ?? 0.0) as double;
+
+      final int quantity = (item['quantity'] is double)
+          ? (item['quantity'] as double).toInt()
+          : (item['quantity'] ?? 0) as int;
+
+      final double subtotal = price * quantity;
+      print("💰 Hitung subtotal: $price x $quantity = $subtotal");
+
+      details.add({
+        'product_id': item['product_id'],
+        'quantity': quantity,
+        'price': price,
+        'subtotal': subtotal,
+      });
+
+      totalPrice += subtotal;
+      totalQty += quantity;
     }
+
+    print("📊 Total Qty: $totalQty | Total Price: $totalPrice");
 
     final transactionOffline = {
       'invoice_number':
@@ -202,15 +213,39 @@ class LocalDBService {
       'details': details,
     };
 
-    await db.insert('transactions_pending', {
-      'data': jsonEncode(transactionOffline),
-      'synced': 0,
-    });
+    print(
+      "🧾 Data transaksi offline (siap disimpan): ${jsonEncode(transactionOffline)}",
+    );
+
+    try {
+      final encodedData = jsonEncode(transactionOffline);
+      final id = await db.insert('transactions_pending', {
+        'data': encodedData,
+        'synced': 0,
+      });
+      print(
+        "✅ [SUCCESS] Transaksi offline berhasil disimpan ke SQLite (ID: $id)",
+      );
+    } catch (e, stack) {
+      print("❌ [ERROR] Gagal menyimpan transaksi offline: $e");
+      print(stack);
+    }
+
+    // Opsional: tampilkan isi tabel untuk verifikasi
+    final count = Sqflite.firstIntValue(
+      await db.rawQuery('SELECT COUNT(*) FROM transactions_pending'),
+    );
+    print("📦 [DEBUG] Jumlah transaksi offline di DB sekarang: $count");
   }
 
   Future<List<Map<String, dynamic>>> getPendingTransactions() async {
     final db = await database;
     return await db.query('transactions_pending', where: 'synced = 0');
+  }
+
+  Future<void> deletePendingTransaction(int id) async {
+    final db = await database;
+    await db.delete('transactions_pending', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> markTransactionSynced(int id) async {

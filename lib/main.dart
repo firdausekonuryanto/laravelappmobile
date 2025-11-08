@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:laravelappmobile/utils/connectivity_helper.dart';
 import 'screens/main_screen.dart';
 import 'services/sync_service.dart';
+import 'package:laravelappmobile/utils/connectivity_helper.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 🔹 Load .env file
   try {
     await dotenv.load(fileName: ".env");
     print("✅ ENV loaded successfully: ${dotenv.env['API_BASE_URL']}");
@@ -14,14 +17,17 @@ Future<void> main() async {
     print("❌ Error loading .env: $e");
   }
 
-  // Jalankan sinkronisasi transaksi offline saat startup
+  // 🔹 Jalankan sinkronisasi awal (kalau ada transaksi offline)
   await SyncService().syncPendingTransactions();
 
-  // Jalankan listener untuk koneksi (akan sinkron otomatis jika online)
+  // 🔹 Inisialisasi konektivitas listener global
+  ConnectivityHelper.initialize();
+
+  // 🔹 Jalankan listener manual untuk logging dan auto-sync
   Connectivity().onConnectivityChanged.listen((
     List<ConnectivityResult> results,
   ) async {
-    final hasConnection =
+    final bool hasConnection =
         results.isNotEmpty && results.any((r) => r != ConnectivityResult.none);
 
     if (hasConnection) {
@@ -32,6 +38,7 @@ Future<void> main() async {
     }
   });
 
+  // 🔹 Jalankan aplikasi
   runApp(const MyApp());
 }
 
